@@ -1,6 +1,7 @@
 """
 YOLOv8原生版本 - 使用ultralytics库
 更准确的检测结果和更好的性能
+支持 ByteTrack 高精度追踪（第二阶段升级）
 """
 import cv2
 import numpy as np
@@ -8,6 +9,14 @@ import os
 import argparse
 import sys
 from ultralytics import YOLO
+
+# 导入追踪器模块
+try:
+    from trackers.byte_tracker import ByteTrackWrapper, SimpleTracker, create_tracker
+    BYTETRACK_AVAILABLE = True
+except ImportError:
+    BYTETRACK_AVAILABLE = False
+    print("⚠️ 追踪器模块未找到，将使用内置 SimpleTracker")
 
 class YOLOv8Detector:
     def __init__(self, model_name='yolov8n.pt'):
@@ -173,11 +182,32 @@ class SimpleTracker:
         """计算两点距离"""
         return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
-def process_video(input_path, output_path=None, show_video=True, conf_threshold=0.25):
-    """处理视频"""
+def process_video(input_path, output_path=None, show_video=True, conf_threshold=0.25, use_bytetrack=True):
+    """
+    处理视频
+    
+    Args:
+        input_path: 输入视频路径
+        output_path: 输出视频路径
+        show_video: 是否显示实时预览
+        conf_threshold: 置信度阈值
+        use_bytetrack: 是否使用ByteTrack（默认True）
+    """
     print("正在初始化YOLOv8检测器...")
     detector = YOLOv8Detector('yolov8n.pt')  # 使用nano版本，速度快
-    tracker = SimpleTracker()
+    
+    # 选择追踪器
+    if use_bytetrack and BYTETRACK_AVAILABLE:
+        try:
+            tracker = create_tracker('bytetrack', track_thresh=conf_threshold, track_buffer=30)
+            print("🚀 使用 ByteTrack 高精度追踪器")
+        except Exception as e:
+            print(f"⚠️ ByteTrack 初始化失败: {e}")
+            tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
+            print("📌 回退到 SimpleTracker")
+    else:
+        tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
+        print("📌 使用 SimpleTracker 追踪器")
     
     print(f"使用置信度阈值: {conf_threshold}")
     if conf_threshold < 0.1:
@@ -384,6 +414,8 @@ def main():
     parser.add_argument('--no-display', action='store_true', help='不显示视频窗口')
     parser.add_argument('--model', '-m', default='yolov8n.pt', help='YOLOv8模型 (yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt, yolov8x.pt)')
     parser.add_argument('--conf', '-c', type=float, default=0.25, help='置信度阈值 (0.01-0.9, 默认0.25)')
+    parser.add_argument('--tracker', '-t', choices=['bytetrack', 'simple'], default='bytetrack', 
+                        help='追踪器类型: bytetrack(高精度) 或 simple(基础版)')
     
     args = parser.parse_args()
     
@@ -394,12 +426,14 @@ def main():
     
     print("开始处理视频...")
     print(f"使用模型: {args.model}")
+    print(f"追踪器: {args.tracker}")
     
     success = process_video(
         input_path=args.input,
         output_path=args.output,
         show_video=not args.no_display,
-        conf_threshold=args.conf
+        conf_threshold=args.conf,
+        use_bytetrack=(args.tracker == 'bytetrack')
     )
     
     if success:

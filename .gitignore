@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 大文件和输出文件 - 不提交到 GitHub
+input/*.mp4
+input/*.avi
+input/*.mov
+input/*.mkv
+input/*.flv
+input/*.wmv
+output/*.mp4
+output/*.avi
+output/*.mov
+output/*.mkv
+output/*.flv
+output/*.wmv
+
+# 模型文件 - 太大不提交
+models/*.pt
+models/*.onnx
+models/*.pth
+models/*.weights
+
+# 日志文件
+logs/*.log
+logs/*.txt
+
+# 临时文件
+temp/
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 保留文件夹结构但不提交内容
+!input/.gitkeep
+!output/.gitkeep
+!models/.gitkeep
+!logs/.gitkeep

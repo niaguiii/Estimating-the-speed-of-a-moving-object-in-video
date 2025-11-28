@@ -1,7 +1,15 @@
 """
 视频中移动物体速度估计项目 - 主程序
-简化版启动器，自动处理输入输出
-支持ONNX版本和YOLOv8原生版本
+统一入口
+
+核心功能:
+- YOLOv8 物体检测
+- ByteTrack 高精度追踪
+- 速度估算 (km/h)
+
+模式:
+1. 检测追踪模式 - YOLOv8 + ByteTrack
+2. 速度估算模式 - YOLOv8 + ByteTrack + Speed Estimation
 """
 import os
 import sys
@@ -37,12 +45,13 @@ def setup_directories():
 def show_menu():
     """显示主菜单"""
     print("=" * 60)
-    print("🎯 视频中移动物体速度估计项目 - 第一阶段")
+    print("  Video Speed Estimation System")
+    print("  YOLOv8 + ByteTrack + Speed Estimation")
     print("=" * 60)
-    print("功能:")
-    print("  ✅ 物体检测 (YOLOv8 ONNX / ultralytics原生)")
-    print("  ✅ 物体追踪 (ID分配和轨迹跟踪)")
-    print("  ✅ 视频分析 (帧数、帧率统计)")
+    print("Core Technologies:")
+    print("  - YOLOv8: Object Detection")
+    print("  - ByteTrack: High-Precision Tracking")
+    print("  - Speed Estimation: Real-world Speed (km/h)")
     print("=" * 60)
 
 def select_video():
@@ -177,25 +186,39 @@ def get_output_filename(input_path):
     return output_name
 
 def select_model_version():
-    """选择模型版本"""
-    print("\n🤖 选择检测模型版本:")
-    print("  1. ONNX版本 (轻量级，兼容性好)")
-    print("  2. YOLOv8原生版本 (ultralytics，更准确)")
+    """选择处理模式"""
+    print("\n" + "=" * 60)
+    print("Select Processing Mode:")
+    print("=" * 60)
+    print("")
+    print("  1. Detection + Tracking")
+    print("     - YOLOv8 object detection")
+    print("     - ByteTrack high-precision tracking")
+    print("     - Trajectory visualization")
+    print("     - Pixel velocity display")
+    print("")
+    print("  2. Detection + Tracking + Speed Estimation [Recommended]")
+    print("     - All features from mode 1")
+    print("     - Real-world speed estimation (km/h)")
+    print("     - Speed statistics panel")
+    print("     - Auto calibration based on object size")
+    print("")
+    print("=" * 60)
     
     while True:
         try:
-            choice = input("\n请选择模型版本 (1-2, 默认2): ").strip()
+            choice = input("\nSelect mode (1-2, default 2): ").strip()
             if not choice:
-                choice = '2'  # 默认使用原生版本
+                choice = '2'  # Default: Speed Estimation
                 
             if choice == '1':
-                return 'onnx'
+                return 'tracking'
             elif choice == '2':
-                return 'native'
+                return 'speed'
             else:
-                print("❌ 请输入 1 或 2")
+                print("[ERROR] Please enter 1 or 2")
         except ValueError:
-            print("❌ 输入格式错误，请重新输入")
+            print("[ERROR] Invalid input")
 
 def main():
     """主函数"""
@@ -215,75 +238,85 @@ def main():
     
     # 生成输出文件名
     output_path = get_output_filename(selected_video)
-    if model_version == 'native':
-        # 为原生版本添加标识
-        base_name = os.path.splitext(output_path)[0]
-        output_path = f"{base_name}_yolov8native.mp4"
+    base_name = os.path.splitext(output_path)[0]
     
-    print(f"\n🚀 开始处理视频...")
-    print(f"📥 输入: {selected_video}")
-    print(f"📤 输出: {output_path}")
-    print(f"🤖 模型: {'YOLOv8原生版本' if model_version == 'native' else 'ONNX版本'}")
+    # 根据版本添加标识
+    version_suffix = {
+        'tracking': '_tracking',
+        'speed': '_speed'
+    }
+    output_path = f"{base_name}{version_suffix.get(model_version, '')}.mp4"
+    
+    # 模式名称映射
+    mode_names = {
+        'tracking': 'YOLOv8 + ByteTrack (Detection & Tracking)',
+        'speed': 'YOLOv8 + ByteTrack + Speed (Full Features)'
+    }
+    
+    print(f"\n" + "=" * 60)
+    print(f"Starting video processing...")
+    print(f"=" * 60)
+    print(f"Input:  {selected_video}")
+    print(f"Output: {output_path}")
+    print(f"Mode:   {mode_names.get(model_version, model_version)}")
+    print("=" * 60)
     
     # 询问是否显示实时窗口
     show_window = True
-    choice = input("\n是否显示处理窗口？(y/n, 默认y): ").lower().strip()
+    choice = input("\nShow video window? (y/n, default y): ").lower().strip()
     if choice == 'n':
         show_window = False
     
     # 处理视频
     try:
-        if model_version == 'native':
-            # 使用YOLOv8原生版本
-            from main_yolov8_native import process_video
-        else:
-            # 使用ONNX版本
-            from main_opencv import process_video
+        # 根据版本导入对应模块
+        if model_version == 'speed':
+            from main_yolov8_speed import process_video
+        else:  # tracking
+            from main_yolov8_bytetrack import process_video
         
-        if model_version == 'native':
-            # 原生版本支持置信度参数
-            success = process_video(
-                input_path=selected_video,
-                output_path=output_path,
-                show_video=show_window,
-                #conf_threshold=0.1  # 默认0.25，可修改
-            )
-        else:
-            # ONNX版本
-            success = process_video(
-                input_path=selected_video,
-                output_path=output_path,
-                show_video=show_window
-            )
+        # 调用处理函数
+        success = process_video(
+            input_path=selected_video,
+            output_path=output_path,
+            show_video=show_window,
+            conf_threshold=0.25
+        )
         
         if success:
             print("\n" + "=" * 60)
-            print("🎉 处理完成！")
+            print("[DONE] Processing Complete!")
             print("=" * 60)
-            print(f"✅ 输出文件已保存: {output_path}")
-            print(f"🤖 使用模型: {'YOLOv8原生版本' if model_version == 'native' else 'ONNX版本'}")
+            print(f"[OK] Output saved: {output_path}")
+            print(f"[OK] Mode: {mode_names.get(model_version, model_version)}")
+            
+            if model_version == 'speed':
+                print("[OK] Speed estimation enabled")
+            else:
+                print("[OK] ByteTrack tracking enabled")
+            
             print("=" * 60)
             
             # 询问是否打开输出文件夹
-            choice = input("\n是否打开输出文件夹？(y/n): ").lower().strip()
+            choice = input("\nOpen output folder? (y/n): ").lower().strip()
             if choice == 'y':
                 try:
                     import subprocess
                     subprocess.run(['explorer', 'output'], check=True)
                 except:
-                    print("📁 请手动打开 output/ 文件夹查看结果")
+                    print("Please open output/ folder manually")
         else:
-            print("\n❌ 处理失败，请检查输入文件")
+            print("\n[ERROR] Processing failed")
             
     except KeyboardInterrupt:
-        print("\n\n⏹️  用户中断处理")
+        print("\n\n[STOP] User interrupted")
     except Exception as e:
-        print(f"\n❌ 处理过程中出现错误: {e}")
+        print(f"\n[ERROR] {e}")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n👋 程序退出")
+        print("\n\nProgram exit")
     
-    input("\n按任意键关闭窗口...")
+    input("\nPress Enter to close...")

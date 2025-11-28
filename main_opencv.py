@@ -1,6 +1,6 @@
 """
 简化版主程序 - 使用OpenCV内置功能实现物体检测和追踪
-避免依赖problematic的ultralytics包
+支持 ByteTrack 高精度追踪（第二阶段升级）
 """
 import cv2
 import numpy as np
@@ -8,6 +8,14 @@ import os
 import argparse
 import sys
 import urllib.request
+
+# 导入追踪器模块
+try:
+    from trackers.byte_tracker import ByteTrackWrapper, SimpleTracker, create_tracker
+    BYTETRACK_AVAILABLE = True
+except ImportError:
+    BYTETRACK_AVAILABLE = False
+    print("⚠️ 追踪器模块未找到，将使用内置 SimpleTracker")
 
 class OpenCVObjectDetector:
     def __init__(self):
@@ -332,11 +340,31 @@ class SimpleTracker:
         """计算两点距离"""
         return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
-def process_video(input_path, output_path=None, show_video=True):
-    """处理视频"""
+def process_video(input_path, output_path=None, show_video=True, use_bytetrack=True):
+    """
+    处理视频
+    
+    Args:
+        input_path: 输入视频路径
+        output_path: 输出视频路径
+        show_video: 是否显示实时预览
+        use_bytetrack: 是否使用ByteTrack（默认True）
+    """
     print("正在初始化检测器...")
     detector = OpenCVObjectDetector()
-    tracker = SimpleTracker()
+    
+    # 选择追踪器
+    if use_bytetrack and BYTETRACK_AVAILABLE:
+        try:
+            tracker = create_tracker('bytetrack', track_thresh=0.25, track_buffer=30)
+            print("🚀 使用 ByteTrack 高精度追踪器")
+        except Exception as e:
+            print(f"⚠️ ByteTrack 初始化失败: {e}")
+            tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
+            print("📌 回退到 SimpleTracker")
+    else:
+        tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
+        print("📌 使用 SimpleTracker 追踪器")
     
     # 打开视频
     cap = cv2.VideoCapture(input_path)
