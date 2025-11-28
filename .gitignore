@@ -49,6 +49,10 @@ models/*.pt
 models/*.onnx
 models/*.pth
 models/*.weights
+*.pt
+*.onnx
+*.pth
+*.weights
 
 # 日志文件
 logs/*.log
