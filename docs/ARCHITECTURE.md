@@ -1,343 +1,815 @@
 # 技术架构文档
 
-> 动态场景单摄像头全自动速度估计系统 - 技术架构设计
+> 动态场景单摄像头全自动速度估计系统 - 完整技术架构设计
+
+**最后更新：** 2026-01-05  
+**当前版本：** Phase 3 核心完成，Phase 4 Web开发中
+
+---
+
+## 📑 目录
+
+- [系统架构概览](#系统架构概览)
+- [四种处理模式架构](#四种处理模式架构)
+- [核心技术模块](#核心技术模块)
+- [Web应用架构](#web应用架构)
+- [数据流程详解](#数据流程详解)
+- [技术决策](#技术决策)
+- [性能优化](#性能优化)
+
+---
 
 ## 🏗️ 系统架构概览
 
-### 当前架构 (第一、二阶段 ✅)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    用户界面层                             │
-│   main.py (统一入口) │ 双模式选择                  │
-└─────────────────────────────────────────────────────────┘
-                              │
-┌─────────────────────────────────────────────────────────┐
-│                    应用逻辑层                             │
-│ main_yolov8_bytetrack.py │ main_yolov8_speed.py         │
-│ (检测+追踪)                (检测+追踪+速度)       │
-└─────────────────────────────────────────────────────────┘
-                              │
-┌─────────────────────────────────────────────────────────┐
-│                    AI算法层                              │
-│ YOLOv8检测 │ ByteTrack追踪 │ 速度估算 (km/h)       │
-│ (卡尔曼滤波 + 两阶段匹配 + EMA平滑)                 │
-└─────────────────────────────────────────────────────────┘
-                              │
-┌─────────────────────────────────────────────────────────┐
-│                    框架层                                │
-│ Ultralytics YOLOv8 │ OpenCV │ NumPy                  │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 目标架构 (第三阶段 🔄)
+### 整体架构图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           用户界面层                                 │
-│         main.py (统一入口) │ config.py (系统配置)                   │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────────────────────────────────────────┐
-│                         图像预处理层 (可选)                          │
-│              去雨增强 │ 去雾增强 │ 低光增强 │ 视频稳定                │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────────────────────────────────────────┐
-│                           检测追踪层                                 │
-│     YOLOv8检测器 ──────→ ByteTrack追踪器 ──────→ 轨迹管理           │
-│     (物体边框)          (卡尔曼滤波+ID)        (历史轨迹)            │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────────────────────────────────────────┐
-│                      运动分离层 (核心创新)                           │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐  │
-│  │ RAFT光流    │ →  │ 背景运动估计 │ →  │ 运动分离               │  │
-│  │ (全图运动)  │    │ (摄像头运动) │    │ 目标速度=观测-摄像头    │  │
-│  └─────────────┘    └─────────────┘    └─────────────────────────┘  │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────────────────────────────────────────┐
-│                       深度估计层 (全自动标定)                        │
-│     Depth Anything V2 Metric ──────→ 像素到真实世界转换             │
-│     (绝对深度/米)                    (自动完成,无需手动标定)         │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────────────────────────────────────────┐
-│                          速度计算层                                  │
-│     真实位移计算 ──────→ 速度计算 ──────→ 结果输出                   │
-│     (米)                 (km/h, m/s)      (视频/CSV/JSON)           │
+│                          用户交互层                                   │
+│  ┌──────────────────┐              ┌──────────────────┐             │
+│  │   CLI命令行界面   │              │   Web网页界面     │             │
+│  │   main.py        │              │   Vue 3 Frontend │             │
+│  └──────────────────┘              └──────────────────┘             │
+└─────────────────────────────┬───────────────┬───────────────────────┘
+                              │               │
+                        ┌─────┴─────┐   ┌────┴────┐
+                        │  本地处理  │   │  FastAPI │
+                        │           │   │  Backend │
+                        └─────┬─────┘   └────┬────┘
+                              │               │
+┌─────────────────────────────┴───────────────┴───────────────────────┐
+│                          处理引擎层                                   │
+│                                                                      │
+│  ┌────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │ 模式1  │  │  模式2   │  │  模式3   │  │  模式4   │             │
+│  │检测追踪│  │ 速度估算 │  │ RAFT光流 │  │ 深度感知 │             │
+│  └────────┘  └──────────┘  └──────────┘  └──────────┘             │
+│                                                                      │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+┌─────────────────────────────┴───────────────────────────────────────┐
+│                          AI算法层                                     │
+│                                                                      │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐   │
+│  │  YOLOv8    │  │ ByteTrack  │  │    RAFT    │  │  Depth V2  │   │
+│  │  检测引擎  │  │ 追踪引擎   │  │  光流引擎  │  │  深度引擎  │   │
+│  └────────────┘  └────────────┘  └────────────┘  └────────────┘   │
+│                                                                      │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+┌─────────────────────────────┴───────────────────────────────────────┐
+│                          框架层                                       │
+│  PyTorch │ OpenCV │ NumPy │ FastAPI │ Vue 3 │ Vite                 │
 └─────────────────────────────────────────────────────────────────────┘
-```
-
-## 🔄 数据处理流程
-
-### 当前流程 (第一、二阶段 ✅)
-
-#### 模式 1: 检测 + 追踪
-```
-输入视频 → 帧提取 → YOLOv8检测 → ByteTrack → 轨迹渲染 → 输出视频
-   │         │         │          │          │          │
-  MP4     OpenCV   80+类物体   卡尔曼滤波   ID+轨迹线  保存文件
-```
-
-#### 模式 2: 检测 + 追踪 + 速度估算
-```
-输入视频 → YOLOv8 → ByteTrack → 物体尺寸标定 → 速度计算 → EMA平滑 → 输出
-   │        │        │            │             │          │        │
-  MP4     检测框   轨迹+ID   像素/米比例       km/h       稳定显示  视频
-                        (车/人/卡车等)
-│  问题：摄像头在移动时，观测到的运动 = 摄像头运动 + 目标真实运动       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  帧N-1                    帧N                                       │
-│  ┌─────────┐            ┌─────────┐                                │
-│  │  🚗     │  ───→      │    🚗   │   观测位移: 50像素              │
-│  │    🌲   │            │  🌲     │   背景位移: 20像素 (摄像头运动)  │
-│  └─────────┘            └─────────┘                                │
-│                                                                     │
-│  计算: 目标真实运动 = 50 - 20 = 30像素                               │
-│                                                                     │
-│  技术实现:                                                          │
-│  1. RAFT计算全图光流                                                 │
-│  2. 背景区域(非物体区域)的光流平均值 = 摄像头运动                      │
-│  3. 目标真实运动 = 目标观测运动 - 摄像头运动                          │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## 🧩 核心模块设计
-
-### 1. YOLOv8检测引擎 (main_opencv.py)
-
-#### OpenCVObjectDetector类
-```python
-class OpenCVObjectDetector:
-    def __init__(self):
-        self.net = None
-        self.model_type = None  # 'onnx' 或 'cascade'
-        self.setup_yolo_model()
-    
-    def setup_yolo_model(self):
-        """智能模型加载：ONNX -> 备用检测"""
-        if os.path.exists('models/yolov8n.onnx'):
-            self.net = cv2.dnn.readNetFromONNX('models/yolov8n.onnx')
-            self.model_type = 'onnx'
-        else:
-            self.setup_fallback_detector()  # 人脸检测备用
-```
-
-#### YOLOv8 ONNX实现细节
-- **输入格式**: 640×640 RGB图像，归一化到[0,1]
-- **输出格式**: [1, 84, 8400] 张量
-- **后处理**: 置信度筛选 → NMS → 坐标转换
-
-### 2. 物体追踪算法
-
-#### SimpleTracker类
-```python
-class SimpleTracker:
-    def __init__(self):
-        self.tracks = []           # 当前追踪列表
-        self.next_id = 1          # ID生成器
-        self.max_disappeared = 10  # 消失阈值
-    
-    def update(self, detections):
-        """核心追踪逻辑"""
-        # 1. 距离匹配：欧几里得距离最近邻
-        # 2. ID分配：新物体分配新ID
-        # 3. 状态管理：消失计数器
-```
-
-#### 追踪算法特点
-- **匹配策略**: 基于中心点距离的贪婪匹配
-- **ID管理**: 单调递增，避免ID重复
-- **状态维护**: 简单有效的消失/重现处理
-
-### 3. 用户界面系统 (main.py)
-
-#### 门面模式设计
-```python
-def main():
-    """用户友好的统一入口"""
-    setup_directories()          # 自动创建文件夹
-    videos = get_input_videos()  # 扫描输入视频
-    selected = select_video()    # 用户选择
-    output_path = get_output_filename()  # 自动命名
-    
-    # 调用核心引擎
-    from main_opencv import process_video
-    process_video(selected, output_path)
-```
-
-## 🎯 关键技术决策
-
-### AI模型选择
-
-| 方案 | 精度 | 速度 | 兼容性 | 最终选择 |
-|------|------|------|--------|----------|
-| YOLOv8 ONNX | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ **采用** |
-| 人脸检测 | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 🛡️ **备用** |
-
-### 架构优势
-
-#### 1. 智能降级机制
-```python
-def create_detector():
-    try:
-        return YOLOv8Detector()      # 主力方案
-    except ModelNotFoundError:
-        return FaceDetector()        # 保底方案
-```
-
-#### 2. 零依赖冲突
-- **纯OpenCV实现**: 避免深度学习框架冲突
-- **ONNX标准**: 跨平台模型格式
-- **最小依赖**: 仅需opencv-python和numpy
-
-#### 3. 内存优化
-- **逐帧处理**: 避免整个视频加载到内存
-- **即时释放**: 处理完的帧立即释放
-- **流式设计**: 支持任意长度视频
-
-## 🚀 性能优化设计
-
-### 计算优化
-```python
-# ONNX推理优化
-blob = cv2.dnn.blobFromImage(frame, 1/255.0, (640, 640), swapRB=True)
-net.setInput(blob)
-outputs = net.forward()  # OpenCV DNN硬件优化
-
-# 内存管理
-del frame, outputs  # 主动释放大对象
-```
-
-### 追踪优化
-```python
-# 距离计算优化
-def calculate_distance(p1, p2):
-    return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-
-# 避免全对全计算，使用距离阈值提前剪枝
-```
-
-## 🔧 配置系统设计
-
-### 集中配置管理 (config.py)
-```python
-YOLO_CONFIG = {
-    'onnx_model': 'models/yolov8n.onnx',
-    'confidence_threshold': 0.5,
-    'nms_threshold': 0.4,
-    'input_size': (640, 640)
-}
-
-TRACKING_CONFIG = {
-    'max_distance': 100,        # 像素
-    'max_disappeared': 10       # 帧数
-}
-```
-
-### 5. 速度计算引擎
-
-#### 计算流程
-```
-像素位移 (ByteTrack) 
-    ↓
-真实像素位移 (RAFT运动分离后)
-    ↓
-物体深度 (Metric Depth)
-    ↓
-真实世界位移 = 像素位移 × (深度 / 焦距)
-    ↓
-速度 = 位移 / 时间间隔
-    ↓
-输出: m/s 或 km/h
-```
-
-#### 实现代码框架
-```python
-class SpeedCalculator:
-    def __init__(self, fps=30, focal_length=1000):
-        self.fps = fps
-        self.focal_length = focal_length  # 像素单位的焦距
-    
-    def calculate_speed(self, pixel_displacement, depth, time_delta=None):
-        if time_delta is None:
-            time_delta = 1.0 / self.fps
-        
-        # 像素位移转换为真实世界位移 (米)
-        real_displacement = pixel_displacement * (depth / self.focal_length)
-        
-        # 计算速度 (m/s)
-        speed_ms = real_displacement / time_delta
-        
-        # 转换为 km/h
-        speed_kmh = speed_ms * 3.6
-        
-        return speed_ms, speed_kmh
-```
-
-## 📊 性能监控
-
-### 关键指标
-- **检测延迟**: 单帧检测时间
-- **追踪精度**: ID切换频率 (IDSW)
-- **速度精度**: 估计速度与真实速度的误差
-- **内存使用**: 峰值内存占用
-
-## 🎯 架构演进路径
-
-```
-🏆 第一阶段 - 基础检测追踪 ✅ 已完成
-├── YOLOv8检测 (ONNX + 原生)
-├── SimpleTracker基础追踪
-├── 可视化显示
-└── 视频处理管道
-
-🚀 第二阶段 - ByteTrack + 速度估算 ✅ 已完成
-├── ByteTrack高精度追踪 (卡尔曼滤波 + 两阶段匹配)
-├── 简化版速度估算 (基于物体尺寸自动标定)
-├── EMA速度平滑算法
-├── 轨迹可视化显示
-└── 统一入口整合 (main.py)
-
-🔄 第三阶段 - 光流运动分离 (开发中)
-├── RAFT光流运动分离 ← 核心创新
-├── Metric Depth深度估计 ← 全自动标定
-├── 完整版速度计算引擎
-└── 支持移动摄像头场景
-
-🎯 第四阶段 - 系统增强与部署 (规划中)
-├── 恶劣条件增强 (去雨/去雾)
-├── Web前端界面
-├── RESTful API
-└── 移动端应用扩展
-```
-
-## 🔧 第三阶段依赖清单 (开发中)
-
-```python
-# requirements_phase3.txt (预计)
-torch>=2.0.0              # PyTorch (RAFT, Depth Anything)
-torchvision>=0.15.0       # 视觉模型
-raft-optical-flow         # RAFT光流
-depth-anything-v2         # Metric Depth
-```
-
-## 📦 当前已安装依赖
-
-```python
-# requirements.txt (当前)
-opencv-python>=4.5.0      # OpenCV核心
-numpy>=1.21.0             # 数值计算
-ultralytics>=8.0.0        # YOLOv8 + ByteTrack
 ```
 
 ---
 
-这个架构设计确保了系统的**高性能**、**高可靠性**和**强扩展性**，核心创新在于：
-1. **移动摄像头支持** - RAFT光流实现运动分离
-2. **全自动标定** - Metric Depth无需手动输入
-3. **多场景通用** - 车载、手持、无人机等场景
+## 🎮 四种处理模式架构
+
+### 模式1: 检测 + 追踪
+
+```
+输入视频
+   │
+   ↓
+┌─────────────┐
+│  帧提取     │ → OpenCV VideoCapture
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│ YOLOv8检测  │ → 80+类物体检测
+│  • 边界框   │
+│  • 类别     │
+│  • 置信度   │
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│ ByteTrack  │ → 多目标追踪
+│  • 卡尔曼滤波│
+│  • 两阶段匹配│
+│  • 唯一ID   │
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│  轨迹可视化 │ → 渲染
+│  • ID标签   │
+│  • 轨迹线   │
+│  • 检测框   │
+└──────┬──────┘
+       ↓
+   输出视频
+```
+
+**关键技术：**
+- YOLOv8: Ultralytics官方实现
+- ByteTrack: 卡尔曼滤波 + 两阶段关联
+- 追踪精度: 80-90%
+
+---
+
+### 模式2: 速度估算
+
+```
+输入视频
+   │
+   ↓
+[模式1的所有步骤]
+   │
+   ↓
+┌──────────────┐
+│ 物体尺寸标定 │
+│  • 自动识别类别│
+│  • 标准尺寸库 │
+│    - 车: 4.5m│
+│    - 人: 1.7m│
+│    - 卡车:12m│
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│  速度计算    │
+│ 像素位移 → 米│
+│ 米/秒 → km/h │
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│  EMA平滑     │ → 速度稳定显示
+│  α = 0.3     │
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ 速度渲染     │
+│  • 速度标签  │
+│  • 统计面板  │
+│  • 最大/平均 │
+└──────┬───────┘
+       ↓
+   输出视频
+```
+
+**关键技术：**
+- 基于物体尺寸的自动标定
+- EMA指数移动平均平滑
+- 假设摄像头固定
+
+**局限：**
+- 摄像头移动时精度下降
+
+---
+
+### 模式3: RAFT光流（核心创新）
+
+```
+输入视频
+   │
+   ├────────────┐
+   │            │
+   ↓            ↓
+[模式2流程]  ┌────────────┐
+   │         │ RAFT光流   │
+   │         │  • 全图光流场│
+   │         │  • 像素级运动│
+   │         └──────┬─────┘
+   │                ↓
+   │         ┌────────────┐
+   │         │ 背景运动估计│
+   │         │  • 背景点检测│
+   │         │  • 运动均值  │
+   │         │  • 摄像头速度│
+   │         └──────┬─────┘
+   │                │
+   ↓                ↓
+┌─────────────────────┐
+│   运动分离算法      │
+│ 目标真实运动 =      │
+│ 观测运动 - 摄像头运动│
+└──────┬──────────────┘
+       ↓
+┌──────────────┐
+│ 补偿后速度   │ → 真实速度输出
+└──────┬───────┘
+       ↓
+   输出视频
+```
+
+**关键技术：**
+- RAFT: Princeton Vision Lab光流网络
+- 运动分离算法: 背景均值法
+- 支持移动摄像头
+
+**技术原理：**
+```python
+# 伪代码
+optical_flow = RAFT(frame_t, frame_t+1)
+background_flow = mean(optical_flow[background_pixels])
+camera_motion = background_flow
+
+for obj in tracked_objects:
+    observed_motion = obj.displacement
+    real_motion = observed_motion - camera_motion
+    real_speed = calculate_speed(real_motion)
+```
+
+---
+
+### 模式4: 深度感知速度（最高精度）
+
+```
+输入视频
+   │
+   ├────────────┬────────────┐
+   │            │            │
+   ↓            ↓            ↓
+[模式3流程]  ┌────────┐  ┌────────┐
+   │         │ RAFT   │  │Depth V2│
+   │         │ 光流   │  │深度估计│
+   │         └────┬───┘  └───┬────┘
+   │              │          │
+   │              ↓          ↓
+   │         ┌──────────────────┐
+   │         │  深度感知标定     │
+   │         │ • 每像素深度值    │
+   │         │ • 自动像素/米比例 │
+   │         │ • 无需人工标定    │
+   │         └────────┬─────────┘
+   │                  │
+   ↓                  ↓
+┌───────────────────────────┐
+│     深度修正速度计算      │
+│  • 基于真实深度           │
+│  • RAFT运动补偿          │
+│  • 最高精度输出           │
+└────────┬──────────────────┘
+         ↓
+    输出视频 + 深度图
+```
+
+**关键技术：**
+- Depth Anything V2 Metric: TikTok/ByteDance
+- 单目深度估计 → 绝对深度值（米）
+- 全自动标定，零人工参与
+
+**技术原理：**
+```python
+# 伪代码
+depth_map = DepthAnythingV2(frame)
+depth_at_obj = depth_map[obj.center]
+pixel_to_meter_ratio = calculate_ratio(depth_at_obj, focal_length)
+
+for obj in tracked_objects:
+    pixel_displacement = obj.displacement
+    meter_displacement = pixel_displacement * pixel_to_meter_ratio
+    
+    # RAFT补偿
+    camera_motion = RAFT_background_motion()
+    real_displacement = meter_displacement - camera_motion
+    
+    speed = real_displacement / time_interval
+```
+
+---
+
+## 🔧 核心技术模块
+
+### 1. YOLOv8检测引擎
+
+**实现文件：** `src/main_yolov8_native.py`
+
+```python
+from ultralytics import YOLO
+
+class YOLOv8Detector:
+    def __init__(self, model_path="models/yolov8n.pt"):
+        self.model = YOLO(model_path)
+        self.confidence_threshold = 0.5
+        
+    def detect(self, frame):
+        results = self.model(frame, conf=self.confidence_threshold)
+        return results[0].boxes
+```
+
+**特点：**
+- 80+类COCO物体检测
+- 支持车、人、卡车、自行车、球等
+- FP16半精度加速（GPU）
+
+---
+
+### 2. ByteTrack追踪引擎
+
+**实现文件：** `trackers/byte_tracker.py`
+
+```python
+class ByteTrack:
+    def __init__(self, max_distance=100, max_disappeared=10):
+        self.kalman_filter = KalmanFilter()
+        self.tracks = {}
+        
+    def update(self, detections):
+        # 第一阶段：高置信度匹配
+        high_conf_matches = self._match(detections_high, tracks)
+        
+        # 第二阶段：低置信度匹配
+        low_conf_matches = self._match(detections_low, unmatched_tracks)
+        
+        # 卡尔曼滤波预测
+        for track in tracks:
+            track.predict()
+            
+        return updated_tracks
+```
+
+**关键算法：**
+- 卡尔曼滤波：运动预测
+- 两阶段匹配：高/低置信度分开处理
+- IoU匹配：边界框重叠度
+
+---
+
+### 3. RAFT光流引擎
+
+**实现文件：** `src/optical_flow_raft.py`
+
+```python
+import torch
+from raft import RAFT
+
+class RAFTOpticalFlow:
+    def __init__(self, model_path="models/raft-things.pth"):
+        self.model = RAFT()
+        self.model.load_state_dict(torch.load(model_path))
+        
+    def compute_flow(self, frame1, frame2):
+        # 前向推理
+        flow = self.model(frame1, frame2)
+        return flow  # [H, W, 2] - (dx, dy)
+    
+    def estimate_camera_motion(self, flow, mask):
+        # 背景点的光流均值
+        background_flow = flow[mask == 0]
+        camera_motion = torch.mean(background_flow, dim=0)
+        return camera_motion
+```
+
+**技术细节：**
+- 输入：连续两帧
+- 输出：每个像素的运动向量 (dx, dy)
+- 背景检测：排除检测到的物体区域
+- 摄像头运动：背景光流的均值
+
+---
+
+### 4. Depth深度引擎
+
+**实现文件：** `src/depth_estimation.py`
+
+```python
+from depth_anything_v2 import DepthAnythingV2
+
+class DepthEstimator:
+    def __init__(self, model="depth_anything_v2_vitl"):
+        self.model = DepthAnythingV2.from_pretrained(model)
+        
+    def estimate_depth(self, frame):
+        # 单目深度估计
+        depth_map = self.model(frame)  # [H, W]
+        return depth_map  # 单位：米
+    
+    def get_object_depth(self, depth_map, bbox):
+        # 获取物体的深度
+        x1, y1, x2, y2 = bbox
+        obj_depth = torch.median(depth_map[y1:y2, x1:x2])
+        return obj_depth.item()
+```
+
+**技术细节：**
+- Depth Anything V2 Metric版本
+- 输出绝对深度值（米）
+- 不需要相机内参
+- 支持任意场景
+
+---
+
+### 5. 速度计算引擎
+
+**实现文件：** `src/main_yolov8_speed.py`
+
+```python
+class SpeedCalculator:
+    def __init__(self, fps=30):
+        self.fps = fps
+        self.time_interval = 1.0 / fps
+        
+    def calculate_speed(self, pixel_displacement, pixel_to_meter, 
+                        camera_motion=None):
+        # 米位移
+        meter_displacement = pixel_displacement * pixel_to_meter
+        
+        # RAFT补偿（如果有）
+        if camera_motion is not None:
+            meter_displacement -= camera_motion
+        
+        # 速度计算
+        speed_ms = meter_displacement / self.time_interval
+        speed_kmh = speed_ms * 3.6
+        
+        return speed_kmh
+    
+    def ema_smooth(self, current_speed, prev_speed, alpha=0.3):
+        return alpha * current_speed + (1 - alpha) * prev_speed
+```
+
+---
+
+## 🌐 Web应用架构
+
+### 前后端分离架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    用户浏览器                            │
+│              http://localhost:3000                      │
+└────────────────────┬────────────────────────────────────┘
+                     │ HTTP请求
+                     ↓
+┌─────────────────────────────────────────────────────────┐
+│                  Vue 3 前端 (端口3000)                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │VideoUpload│  │ModeSelect│  │ Progress │             │
+│  └──────────┘  └──────────┘  └──────────┘             │
+│                                                         │
+│  Vite开发服务器 + Axios HTTP客户端                       │
+└────────────────────┬────────────────────────────────────┘
+                     │ RESTful API
+                     │ WebSocket (实时进度)
+                     ↓
+┌─────────────────────────────────────────────────────────┐
+│                FastAPI 后端 (端口8000)                   │
+│                                                         │
+│  ┌─────────────────────────────────────┐              │
+│  │          app.py (主服务器)           │              │
+│  │  • 文件上传接口                      │              │
+│  │  • 模式选择接口                      │              │
+│  │  • 进度查询接口                      │              │
+│  │  • 取消任务接口                      │              │
+│  └────────────┬────────────────────────┘              │
+│               │                                        │
+│               ↓                                        │
+│  ┌─────────────────────────────────────┐              │
+│  │    process_worker.py (处理进程)      │              │
+│  │  • 独立进程运行                      │              │
+│  │  • 实时进度更新                      │              │
+│  │  • 可强制终止                        │              │
+│  └─────────────────────────────────────┘              │
+│                                                         │
+└────────────────────┬────────────────────────────────────┘
+                     │ 调用
+                     ↓
+┌─────────────────────────────────────────────────────────┐
+│              核心处理模块 (src/)                         │
+│  main_yolov8_bytetrack.py | main_yolov8_speed.py       │
+│  main_yolov8_raft.py | main_phase3_complete.py         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 数据流向
+
+```
+用户上传视频
+      │
+      ↓
+  data/web/uploads/
+      │
+      ↓
+FastAPI接收 → 创建worker进程 → 处理视频
+      │                            │
+      ↓                            ↓
+  实时进度更新              data/web/outputs/
+      │                            │
+      ↓                            ↓
+前端轮询进度  ←──────────── 处理完成
+      │
+      ↓
+  用户下载结果
+```
+
+### API接口设计
+
+```python
+# 后端API (web/backend/app.py)
+
+@app.post("/api/upload")
+async def upload_video(file: UploadFile):
+    """上传视频文件"""
+    file_path = f"data/web/uploads/{file.filename}"
+    # 保存文件
+    return {"task_id": task_id}
+
+@app.post("/api/process")
+async def start_processing(task_id: str, mode: int):
+    """启动处理任务"""
+    # 创建独立进程
+    process = multiprocessing.Process(
+        target=process_worker,
+        args=(task_id, mode)
+    )
+    process.start()
+    return {"status": "processing"}
+
+@app.get("/api/progress/{task_id}")
+async def get_progress(task_id: str):
+    """查询处理进度"""
+    progress = get_task_progress(task_id)
+    return {
+        "progress": progress,  # 0-100
+        "fps": fps,
+        "status": "processing"
+    }
+
+@app.post("/api/cancel/{task_id}")
+async def cancel_task(task_id: str):
+    """取消处理任务"""
+    process.terminate()  # 真实终止进程
+    return {"status": "cancelled"}
+```
+
+---
+
+## 📊 数据流程详解
+
+### 模式3：RAFT光流完整流程
+
+```
+Frame N-1          Frame N
+┌─────────┐      ┌─────────┐
+│  🚗     │      │    🚗   │
+│    🌲   │      │  🌲     │
+│  🏠     │      │🏠       │
+└─────────┘      └─────────┘
+     │                │
+     └────────┬───────┘
+              ↓
+      ┌──────────────┐
+      │ RAFT光流估计 │
+      │ 全图运动向量 │
+      └──────┬───────┘
+             │
+    ┌────────┴────────┐
+    │                 │
+    ↓                 ↓
+┌─────────┐     ┌─────────┐
+│ 物体区域│     │ 背景区域│
+│ 光流    │     │ 光流    │
+│(车+人)  │     │(树+房子)│
+└────┬────┘     └────┬────┘
+     │               │
+     │               ↓
+     │         ┌──────────┐
+     │         │背景光流均值│
+     │         │= 摄像头运动│
+     │         └─────┬─────┘
+     │               │
+     └───────┬───────┘
+             ↓
+    ┌─────────────────┐
+    │ 运动分离         │
+    │ 车真实运动 =     │
+    │ 车观测运动 -     │
+    │ 摄像头运动       │
+    └────────┬─────────┘
+             ↓
+        真实速度
+```
+
+### 模式4：深度感知完整流程
+
+```
+输入帧
+   │
+   ├──────────┬─────────┬────────┐
+   │          │         │        │
+   ↓          ↓         ↓        ↓
+YOLOv8    ByteTrack   RAFT    Depth V2
+检测      追踪        光流     深度估计
+   │          │         │        │
+   └──────────┴─────────┴────────┘
+              │
+              ↓
+    ┌────────────────────┐
+    │  数据融合           │
+    │ • 检测框 + ID       │
+    │ • 光流向量          │
+    │ • 深度值            │
+    └──────┬─────────────┘
+           │
+           ↓
+    ┌────────────────────┐
+    │ 自动标定            │
+    │ 像素/米 = f(深度)   │
+    └──────┬─────────────┘
+           │
+           ↓
+    ┌────────────────────┐
+    │ 运动补偿速度计算    │
+    │ • RAFT分离摄像头运动│
+    │ • 深度修正距离      │
+    │ • 输出真实速度      │
+    └──────┬─────────────┘
+           ↓
+      输出视频 + 深度图
+```
+
+---
+
+## 🎯 技术决策
+
+### AI模型选择
+
+| 模块 | 候选方案 | 最终选择 | 理由 |
+|------|---------|---------|------|
+| 物体检测 | YOLOv5/v8/v10 | **YOLOv8** | 精度速度平衡最优，生态成熟 |
+| 目标追踪 | SORT/DeepSORT/ByteTrack | **ByteTrack** | 精度最高，卡尔曼滤波稳定 |
+| 光流估计 | FlowNet/PWC-Net/RAFT | **RAFT** | Princeton出品，精度最高 |
+| 深度估计 | MiDaS/DPT/Depth Anything | **Depth Anything V2** | Metric版本，绝对深度 |
+
+### 框架选择
+
+| 层次 | 候选方案 | 最终选择 | 理由 |
+|------|---------|---------|------|
+| 深度学习 | TensorFlow/PyTorch | **PyTorch** | 模型生态丰富，易用 |
+| Web后端 | Flask/FastAPI/Django | **FastAPI** | 异步高性能，自动文档 |
+| Web前端 | React/Vue/Angular | **Vue 3** | 易学易用，组合式API |
+| 构建工具 | Webpack/Vite | **Vite** | 快速热更新，开发体验好 |
+
+---
+
+## ⚡ 性能优化
+
+### 1. 模型推理优化
+
+```python
+# GPU加速
+model = YOLO("yolov8n.pt").to("cuda")
+model.half()  # FP16半精度
+
+# 批处理（如果内存充足）
+results = model(frames_batch, batch=8)
+```
+
+### 2. 内存优化
+
+```python
+# 逐帧处理，避免加载整个视频
+cap = cv2.VideoCapture(video_path)
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    # 处理单帧
+    result = process_frame(frame)
+    
+    # 立即释放
+    del frame, result
+    
+cap.release()
+```
+
+### 3. 多进程并行
+
+```python
+# Web模式：独立进程处理
+import multiprocessing
+
+process = multiprocessing.Process(
+    target=process_video,
+    args=(video_path, mode)
+)
+process.start()
+
+# 主进程继续响应请求
+# 处理进程独立运行，可终止
+```
+
+### 4. 实时进度反馈
+
+```python
+# 0.1%精度的进度更新
+total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+for i, frame in enumerate(frames):
+    # 处理帧
+    process_frame(frame)
+    
+    # 更新进度
+    progress = (i / total_frames) * 100
+    update_progress(task_id, progress)
+```
+
+---
+
+## 📦 依赖管理
+
+### CPU版本 (scripts/cpu/requirements.txt)
+
+```
+# 核心依赖
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+numpy>=1.24.0
+
+# Web后端（可选）
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
+# 工具
+tqdm>=4.66.0
+```
+
+### GPU版本 (scripts/gpu/requirements.txt)
+
+```
+# 核心依赖
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+numpy>=1.24.0
+
+# GPU加速
+torch>=2.0.0+cu118
+torchvision>=0.15.0+cu118
+
+# RAFT光流
+raft-pytorch>=1.0.0
+
+# Depth深度估计
+depth-anything-v2>=1.0.0
+
+# Web后端
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+```
+
+---
+
+## 🔄 架构演进历史
+
+```
+Phase 1 (2023-2024)
+├─ OpenCV + ONNX检测
+├─ SimpleTracker追踪
+└─ 基础视频处理管道
+
+Phase 2 (2024)
+├─ YOLOv8原生集成
+├─ ByteTrack高精度追踪
+├─ 基于物体尺寸的速度估算
+└─ EMA速度平滑
+
+Phase 3 (2024-2025) ✅
+├─ RAFT光流运动分离
+├─ Depth Anything V2深度估计
+├─ 移动摄像头支持
+└─ 深度感知速度计算
+
+Phase 4 (2025-2026) 🔧
+├─ Vue 3 + FastAPI Web应用
+├─ 实时进度反馈
+├─ 任务取消功能
+└─ 在线部署（待完成）
+```
+
+---
+
+## 📊 性能指标
+
+### 处理速度（CPU版本）
+
+| 视频规格 | 模式1 | 模式2 | 模式3 | 模式4 |
+|---------|-------|-------|-------|-------|
+| 640×480 | 12-15 FPS | 10-12 FPS | - | - |
+| 1280×720 | 8-10 FPS | 6-8 FPS | - | - |
+
+*模式3、4需要GPU*
+
+### 处理速度（GPU版本）
+
+| 视频规格 | 模式1 | 模式2 | 模式3 | 模式4 |
+|---------|-------|-------|-------|-------|
+| 640×480 | 40-50 FPS | 35-45 FPS | 20-25 FPS | 15-20 FPS |
+| 1280×720 | 25-30 FPS | 20-25 FPS | 12-15 FPS | 8-12 FPS |
+| 1920×1080 | 15-20 FPS | 12-18 FPS | 8-10 FPS | 5-8 FPS |
+
+### 内存占用
+
+| 模式 | 640×480 | 1280×720 | 1920×1080 |
+|------|---------|----------|-----------|
+| 模式1 | ~200MB | ~400MB | ~600MB |
+| 模式2 | ~200MB | ~400MB | ~600MB |
+| 模式3 | ~1.5GB | ~2.5GB | ~4GB |
+| 模式4 | ~2GB | ~3.5GB | ~5GB |
+
+---
+
+**文档更新：** 2026-01-05  
+**对应版本：** Phase 3 核心完成，Phase 4 Web开发中

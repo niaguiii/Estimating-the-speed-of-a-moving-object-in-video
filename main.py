@@ -17,7 +17,7 @@ import glob
 
 def get_input_videos():
     """获取input文件夹中的所有视频文件"""
-    input_dir = "input"
+    input_dir = "data/cli/input"
     if not os.path.exists(input_dir):
         return []
     
@@ -35,7 +35,7 @@ def get_input_videos():
 
 def setup_directories():
     """创建必要的文件夹"""
-    dirs = ['input', 'output', 'models', 'logs']
+    dirs = ['data/cli/input', 'data/cli/output', 'models', 'logs']
     
     for dir_name in dirs:
         if not os.path.exists(dir_name):
@@ -59,15 +59,15 @@ def select_video():
     video_files = get_input_videos()
     
     if not video_files:
-        print("\n📁 input/ 文件夹中没有找到视频文件")
+        print("\n📁 data/cli/input/ 文件夹中没有找到视频文件")
         print("支持的格式: MP4, AVI, MOV, MKV, FLV, WMV")
-        print("\n请将视频文件放入 input/ 文件夹后重新运行程序")
+        print("\n请将视频文件放入 data/cli/input/ 文件夹后重新运行程序")
         
         # 询问是否创建测试视频
         choice = input("\n是否创建测试视频？(y/n): ").lower().strip()
         if choice == 'y':
             create_test_video()
-            return "input/test_video.mp4"
+            return "data/cli/input/test_video.mp4"
         else:
             return None
     
@@ -108,10 +108,10 @@ def create_test_video():
         print("🎬 正在创建测试视频...")
         
         # 确保input文件夹存在
-        if not os.path.exists('input'):
-            os.makedirs('input')
+        if not os.path.exists('data/cli/input'):
+            os.makedirs('data/cli/input')
         
-        output_path = 'input/test_video.mp4'
+        output_path = 'data/cli/input/test_video.mp4'
         
         # 视频参数
         width, height = 640, 480
@@ -176,12 +176,12 @@ def create_test_video():
 
 def get_output_filename(input_path):
     """生成输出文件名"""
-    if not os.path.exists('output'):
-        os.makedirs('output')
+    if not os.path.exists('data/cli/output'):
+        os.makedirs('data/cli/output')
     
     # 获取输入文件名（不含扩展名）
     base_name = os.path.splitext(os.path.basename(input_path))[0]
-    output_name = f"output/{base_name}_result.mp4"
+    output_name = f"data/cli/output/{base_name}_result.mp4"
     
     return output_name
 
@@ -195,28 +195,41 @@ def select_model_version():
     print("     - YOLOv8 object detection")
     print("     - ByteTrack high-precision tracking")
     print("     - Trajectory visualization")
-    print("     - Pixel velocity display")
     print("")
-    print("  2. Detection + Tracking + Speed Estimation [Recommended]")
+    print("  2. Detection + Tracking + Speed Estimation")
     print("     - All features from mode 1")
-    print("     - Real-world speed estimation (km/h)")
-    print("     - Speed statistics panel")
-    print("     - Auto calibration based on object size")
+    print("     - Speed estimation (km/h)")
+    print("     - Assumes stationary camera")
+    print("")
+    print("  3. RAFT Optical Flow + Speed Estimation [Phase 3]")
+    print("     - All features from mode 2")
+    print("     - RAFT optical flow for camera motion separation")
+    print("     - Supports moving camera scenarios")
+    print("")
+    print("  4. RAFT + Depth Anything V2 [Phase 3 Complete - BEST!] 🔥")
+    print("     - All features from mode 3")
+    print("     - Depth Anything V2 for metric depth estimation")
+    print("     - Depth-aware speed estimation")
+    print("     - Most accurate results")
     print("")
     print("=" * 60)
     
     while True:
         try:
-            choice = input("\nSelect mode (1-2, default 2): ").strip()
+            choice = input("\nSelect mode (1-4, default 4): ").strip()
             if not choice:
-                choice = '2'  # Default: Speed Estimation
+                choice = '4'  # Default: Phase 3 Complete
                 
             if choice == '1':
                 return 'tracking'
             elif choice == '2':
                 return 'speed'
+            elif choice == '3':
+                return 'raft'
+            elif choice == '4':
+                return 'phase3'
             else:
-                print("[ERROR] Please enter 1 or 2")
+                print("[ERROR] Please enter 1-4")
         except ValueError:
             print("[ERROR] Invalid input")
 
@@ -243,14 +256,18 @@ def main():
     # 根据版本添加标识
     version_suffix = {
         'tracking': '_tracking',
-        'speed': '_speed'
+        'speed': '_speed',
+        'raft': '_raft',
+        'phase3': '_phase3'
     }
     output_path = f"{base_name}{version_suffix.get(model_version, '')}.mp4"
     
     # 模式名称映射
     mode_names = {
         'tracking': 'YOLOv8 + ByteTrack (Detection & Tracking)',
-        'speed': 'YOLOv8 + ByteTrack + Speed (Full Features)'
+        'speed': 'YOLOv8 + ByteTrack + Speed (Full Features)',
+        'raft': 'RAFT Optical Flow + Speed Estimation (Phase 3)',
+        'phase3': 'RAFT + Depth Anything V2 (Phase 3 Complete)'
     }
     
     print(f"\n" + "=" * 60)
@@ -270,18 +287,43 @@ def main():
     # 处理视频
     try:
         # 根据版本导入对应模块
-        if model_version == 'speed':
-            from main_yolov8_speed import process_video
+        if model_version == 'phase3':
+            from src.main_phase3_complete import process_video_phase3
+            # 调用Phase 3完整处理
+            success = process_video_phase3(
+                input_path=selected_video,
+                output_path=output_path,
+                show_video=show_window,
+                conf_threshold=0.25,
+                show_depth=True,
+                depth_frequency=10
+            )
+        elif model_version == 'raft':
+            from src.main_yolov8_raft import process_video_with_raft
+            # 调用RAFT处理函数
+            success = process_video_with_raft(
+                input_path=selected_video,
+                output_path=output_path,
+                show_video=show_window,
+                conf_threshold=0.25,
+                show_flow=False
+            )
+        elif model_version == 'speed':
+            from src.main_yolov8_speed import process_video
+            success = process_video(
+                input_path=selected_video,
+                output_path=output_path,
+                show_video=show_window,
+                conf_threshold=0.25
+            )
         else:  # tracking
-            from main_yolov8_bytetrack import process_video
-        
-        # 调用处理函数
-        success = process_video(
-            input_path=selected_video,
-            output_path=output_path,
-            show_video=show_window,
-            conf_threshold=0.25
-        )
+            from src.main_yolov8_bytetrack import process_video
+            success = process_video(
+                input_path=selected_video,
+                output_path=output_path,
+                show_video=show_window,
+                conf_threshold=0.25
+            )
         
         if success:
             print("\n" + "=" * 60)
@@ -290,7 +332,11 @@ def main():
             print(f"[OK] Output saved: {output_path}")
             print(f"[OK] Mode: {mode_names.get(model_version, model_version)}")
             
-            if model_version == 'speed':
+            if model_version == 'phase3':
+                print("[OK] RAFT + Depth Anything V2 + Speed estimation enabled")
+            elif model_version == 'raft':
+                print("[OK] RAFT optical flow + Speed estimation enabled")
+            elif model_version == 'speed':
                 print("[OK] Speed estimation enabled")
             else:
                 print("[OK] ByteTrack tracking enabled")
@@ -302,9 +348,9 @@ def main():
             if choice == 'y':
                 try:
                     import subprocess
-                    subprocess.run(['explorer', 'output'], check=True)
+                    subprocess.run(['explorer', 'data\\cli\\output'], check=True)
                 except:
-                    print("Please open output/ folder manually")
+                    print("Please open data/cli/output/ folder manually")
         else:
             print("\n[ERROR] Processing failed")
             

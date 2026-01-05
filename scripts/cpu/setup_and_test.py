@@ -8,6 +8,17 @@ import subprocess
 import platform
 import glob
 
+# 确保在项目根目录运行
+# 如果脚本在 scripts/cpu/ 文件夹中，切换到项目根目录
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+# 如果在 scripts/cpu/，则切换到项目根目录
+if os.path.basename(script_dir) == 'cpu' and os.path.basename(parent_dir) == 'scripts':
+    project_root = os.path.dirname(parent_dir)
+else:
+    project_root = script_dir
+os.chdir(project_root)
+
 def show_header():
     """显示标题"""
     print("=" * 60)
@@ -60,12 +71,20 @@ def install_dependencies():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
         print("✅ pip升级成功")
         
-        # 安装核心依赖
-        core_deps = ["opencv-python", "numpy"]
-        for dep in core_deps:
-            print(f"安装 {dep}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", dep])
-            print(f"✅ {dep} 安装成功")
+        # 检查requirements.txt位置
+        requirements_path = "scripts/cpu/requirements.txt"
+        if os.path.exists(requirements_path):
+            print(f"找到 {requirements_path}，开始安装所有依赖...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", requirements_path])
+            print("✅ 所有依赖安装成功")
+        else:
+            # 降级到安装基本依赖
+            print("⚠️  未找到 requirements.txt，安装基本依赖...")
+            core_deps = ["opencv-python", "numpy"]
+            for dep in core_deps:
+                print(f"安装 {dep}...")
+                subprocess.check_call([sys.executable, "-m", "pip", "install", dep])
+                print(f"✅ {dep} 安装成功")
         
         return True
     except subprocess.CalledProcessError as e:
@@ -165,8 +184,15 @@ def check_project_structure():
     """检查项目结构"""
     print("\n📁 检查项目结构...")
     
-    required_dirs = ['input', 'output', 'models', 'docs']
-    core_files = ['main.py', 'main_opencv.py', 'config.py', 'README.md']
+    required_dirs = ['input', 'output', 'models', 'docs', 'src', 'scripts']
+    core_files = [
+        'main.py',
+        'README.md',
+        'scripts/cpu/requirements.txt',
+        'src/config.py',
+        'src/main_opencv.py',
+        'src/main_yolov8_speed.py'
+    ]
     
     all_good = True
     

@@ -4,19 +4,40 @@ __pycache__/
 *.pyc
 
 # 视频文件 - 太大不提交
-input/*.mp4
-input/*.avi
-input/*.mov
-input/*.mkv
-input/*.flv
-input/*.wmv
-output/*.mp4
-output/*.avi
-output/*.mov
-output/*.mkv
-output/*.flv
-output/*.wmv
+# CLI模式数据
+data/cli/input/*.mp4
+data/cli/input/*.avi
+data/cli/input/*.mov
+data/cli/input/*.mkv
+data/cli/input/*.flv
+data/cli/input/*.wmv
+data/cli/output/*.mp4
+data/cli/output/*.avi
+data/cli/output/*.mov
+data/cli/output/*.mkv
+data/cli/output/*.flv
+data/cli/output/*.wmv
+
+# Web模式数据
+data/web/uploads/*.mp4
+data/web/uploads/*.avi
+data/web/uploads/*.mov
+data/web/outputs/*.mp4
+data/web/outputs/*.avi
+data/web/outputs/*.mov
 
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# Node.js / 前端
+web/frontend/node_modules/
+web/frontend/dist/
+web/frontend/dist-ssr/
+web/frontend/*.local
+web/frontend/.vscode/*
+!web/frontend/.vscode/extensions.json
+
+# 日志
+*.log
+npm-debug.log*
