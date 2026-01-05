@@ -12,15 +12,32 @@ echo ""
 read -p "Press Enter to continue..."
 
 echo ""
-echo "[1/3] Uninstalling CPU version..."
+echo "[1/4] Detecting GPU model..."
+nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1
+echo ""
+echo "IMPORTANT:"
+echo "  - RTX 50 series (5090, 5080, etc.): Choose 1 (CUDA 12.8)"
+echo "  - RTX 40 series and below: Choose 2 (CUDA 11.8)"
+echo ""
+read -p "Choose CUDA version [1=12.8, 2=11.8]: " cuda_choice
+echo ""
+
+echo ""
+echo "[2/4] Uninstalling CPU version..."
 pip uninstall torch torchvision -y
 
 echo ""
-echo "[2/3] Installing GPU version (CUDA 11.8)..."
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+echo "[3/4] Installing GPU version..."
+if [ "$cuda_choice" = "1" ]; then
+    echo "Installing PyTorch with CUDA 12.8 (for RTX 50 series)..."
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+else
+    echo "Installing PyTorch with CUDA 11.8 (for RTX 40 series and below)..."
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+fi
 
 echo ""
-echo "[3/3] Verifying GPU support..."
+echo "[4/4] Verifying GPU support..."
 cd ..
 python3 check_gpu_status.py || python check_gpu_status.py
 cd gpu

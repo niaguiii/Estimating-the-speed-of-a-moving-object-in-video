@@ -1,21 +1,32 @@
 # GPU Environment Requirements - Phase 3 Complete
 # For fresh GPU servers (AutoDL, HengYuan, Aliyun, etc.)
 # 
+# IMPORTANT: For RTX 50 series (RTX 5090, etc.), use CUDA 12.8+
+#            For RTX 40 series and below, use CUDA 11.8
+#
 # INSTALLATION:
 #   Method 1 (Recommended): Run the installation script
 #     cd scripts/gpu
 #     install_gpu.bat     # Windows
 #     ./install_gpu.sh    # Linux
 #
-#   Method 2: Manual installation
+#   Method 2: Manual installation (CUDA 12.8 for RTX 50 series)
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#     pip install -r scripts/gpu/requirements.txt
+#
+#   Method 3: Manual installation (CUDA 11.8 for RTX 40 series)
 #     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 #     pip install -r scripts/gpu/requirements.txt
 
 # ====================================================================
 # Core Deep Learning Framework - GPU VERSION
 # ====================================================================
-# torch>=2.0.0+cu118         # Installed separately via --index-url
-# torchvision>=0.15.0+cu118  # Installed separately via --index-url
+# torch>=2.7.0+cu128         # For RTX 50 series (Installed separately via --index-url)
+# torchvision>=0.18.0+cu128  # For RTX 50 series (Installed separately via --index-url)
+# 
+# OR
+# torch>=2.0.0+cu118         # For RTX 40 series and below (Installed separately via --index-url)
+# torchvision>=0.15.0+cu118  # For RTX 40 series and below (Installed separately via --index-url)
 
 # ====================================================================
 # Phase 3: Optical Flow & Depth Estimation

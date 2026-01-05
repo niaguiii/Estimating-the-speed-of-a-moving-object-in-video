@@ -11,7 +11,9 @@ echo "This script will install all dependencies in a fresh environment"
 echo "Suitable for: AutoDL, HengYuan Cloud, Aliyun GPU servers"
 echo ""
 echo "Installation includes:"
-echo "  1. PyTorch 2.x + CUDA 11.8 (GPU version)"
+echo "  1. PyTorch 2.x + CUDA (GPU version - will prompt for version)"
+echo "     - Option 1: CUDA 12.8 for RTX 50 series (5090, 5080, etc.)"
+echo "     - Option 2: CUDA 11.8 for RTX 40 series and below"
 echo "  2. Torchvision + RAFT support"
 echo "  3. Depth Anything V2 dependencies"
 echo "  4. YOLOv8 + ByteTrack"
@@ -40,12 +42,27 @@ echo "✅ pip upgraded"
 
 echo ""
 echo "================================================================"
-echo "[3/5] Installing PyTorch (GPU version - CUDA 11.8)"
+echo "[3/5] Installing PyTorch (GPU version)"
 echo "================================================================"
-echo "This is the largest package (~2GB), please wait..."
+echo "Detecting GPU model..."
+nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1
 echo ""
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118 || \
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+echo "IMPORTANT: "
+echo "  - RTX 50 series (5090, 5080, etc.): Use CUDA 12.8"
+echo "  - RTX 40 series and below: Use CUDA 11.8"
+echo ""
+read -p "Choose CUDA version - Enter 1 for CUDA 12.8 (RTX 50), 2 for CUDA 11.8 (RTX 40 and below) [1/2]: " cuda_choice
+echo ""
+
+if [ "$cuda_choice" = "1" ]; then
+    echo "Installing PyTorch with CUDA 12.8 (for RTX 50 series)..."
+    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128 || \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+else
+    echo "Installing PyTorch with CUDA 11.8 (for RTX 40 series and below)..."
+    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118 || \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+fi
 if [ $? -ne 0 ]; then
     echo "❌ PyTorch installation failed. Check network connection."
     exit 1

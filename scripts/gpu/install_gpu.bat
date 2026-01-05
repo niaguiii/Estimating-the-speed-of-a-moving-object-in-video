@@ -9,7 +9,9 @@ echo 此脚本将在全新环境中安装所有依赖（GPU版本）
 echo 适用于：AutoDL、恒源云、阿里云等GPU服务器
 echo.
 echo 安装内容：
-echo   1. PyTorch 2.x + CUDA 11.8 (GPU版本)
+echo   1. PyTorch 2.x + CUDA (GPU版本 - 会提示选择版本)
+echo      选项1: CUDA 12.8 适用于RTX 50系列 (5090, 5080等)
+echo      选项2: CUDA 11.8 适用于RTX 40系列及以下
 echo   2. Torchvision + RAFT支持
 echo   3. Depth Anything V2依赖
 echo   4. YOLOv8 + ByteTrack
@@ -39,11 +41,26 @@ echo ✅ pip升级完成
 
 echo.
 echo ================================================================
-echo [3/5] 安装PyTorch (GPU版本 - CUDA 11.8)
+echo [3/5] 安装PyTorch (GPU版本)
 echo ================================================================
-echo 这是最大的包，需要下载约2GB，请耐心等待...
+echo 正在检测GPU型号...
+nvidia-smi --query-gpu=name --format=csv,noheader 2>nul
 echo.
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+echo 重要提示：
+echo   - RTX 50系列 (5090, 5080等): 选择 1 (CUDA 12.8)
+echo   - RTX 40系列及以下 (4090, 3090等): 选择 2 (CUDA 11.8)
+echo.
+set /p cuda_choice="请选择CUDA版本 [1=CUDA 12.8, 2=CUDA 11.8]: "
+echo.
+
+if "%cuda_choice%"=="1" (
+    echo 正在安装 PyTorch + CUDA 12.8 适用于RTX 50系列...
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+) else (
+    echo 正在安装 PyTorch + CUDA 11.8 适用于RTX 40系列及以下...
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+)
+
 if errorlevel 1 (
     echo ❌ PyTorch安装失败，请检查网络连接
     pause
@@ -93,7 +110,11 @@ echo ✅ GPU环境安装完成！
 echo ================================================================
 echo.
 echo 📋 已安装的核心组件：
-echo   ✅ PyTorch 2.x + CUDA 11.8
+if "%cuda_choice%"=="1" (
+    echo   ✅ PyTorch 2.x + CUDA 12.8 (RTX 50系列)
+) else (
+    echo   ✅ PyTorch 2.x + CUDA 11.8 (RTX 40系列及以下)
+)
 echo   ✅ Torchvision (RAFT光流)
 echo   ✅ Depth Anything V2
 echo   ✅ YOLOv8 + ByteTrack

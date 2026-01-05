@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *.pyc
 
+# 虚拟环境（以防误创建）
+.venv/
+venv/
+env/
+
 # 视频文件 - 太大不提交
 # CLI模式数据
 data/cli/input/*.mp4
