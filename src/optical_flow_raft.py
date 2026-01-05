@@ -9,6 +9,13 @@ Features:
 - Object real motion separation
 - GPU/CPU automatic detection
 """
+# ⚠️ 关键：必须最先导入model_config来设置环境变量！
+try:
+    from . import model_config
+except ImportError:
+    import model_config
+
+# 现在才导入torch和相关库
 import torch
 import torchvision.models.optical_flow as flow_models
 import cv2

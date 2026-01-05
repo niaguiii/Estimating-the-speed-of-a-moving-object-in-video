@@ -8,6 +8,25 @@ __pycache__/
 venv/
 env/
 
+# 模型文件 - 大模型自动下载，不提交到GitHub
+# YOLOv8保留在GitHub，RAFT和Depth自动下载到models/
+
+# PyTorch RAFT模型缓存（~100MB）- 自动下载
+models/hub/
+models/checkpoints/
+
+# Hugging Face Depth模型缓存（~400MB）- 自动下载
+models/models--*/
+models/**/*.safetensors
+models/.locks/
+models/version.txt
+
+# 其他模型缓存文件
+models/**/*.bin
+models/**/*.msgpack
+models/**/*.h5
+models/**/.gitattributes
+
 # 视频文件 - 太大不提交
 # CLI模式数据
 data/cli/input/*.mp4

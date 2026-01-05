@@ -8,6 +8,13 @@ import numpy as np
 import os
 import argparse
 import sys
+
+# ⚠️ 必须先导入model_config设置环境变量
+try:
+    from . import model_config
+except ImportError:
+    import model_config
+
 from ultralytics import YOLO
 
 # 导入追踪器模块
@@ -28,20 +35,12 @@ class YOLOv8Detector:
     def setup_model(self):
         """设置YOLOv8模型"""
         try:
-            # 确保models目录存在
-            os.makedirs('models', exist_ok=True)
+            # 使用model_config获取正确路径
+            yolo_path = model_config.get_model_path('yolov8n.pt')
+            print(f"正在加载YOLOv8模型: {yolo_path}")
             
-            print(f"正在加载YOLOv8模型: {self.model_name}")
-            
-            # 如果模型文件不存在，会自动下载到指定位置
-            if not os.path.exists(self.model_name):
-                print(f"模型文件不存在，将自动下载到: {self.model_name}")
-                # 先加载到当前目录，然后移动到models文件夹
-                temp_model = YOLO('yolov8n.pt')
-                temp_model.save(self.model_name)
-                self.model = YOLO(self.model_name)
-            else:
-                self.model = YOLO(self.model_name)
+            # 直接加载（环境变量已设置，会自动下载到models/）
+            self.model = YOLO(yolo_path)
                 
             print("✅ YOLOv8原生模型加载成功")
             
@@ -51,14 +50,7 @@ class YOLOv8Detector:
             
         except Exception as e:
             print(f"❌ YOLOv8模型加载失败: {e}")
-            print("尝试从默认位置加载...")
-            try:
-                self.model = YOLO('yolov8n.pt')
-                self.classes = list(self.model.names.values())
-                print("✅ 使用默认位置的模型加载成功")
-            except Exception as e2:
-                print(f"❌ 完全加载失败: {e2}")
-                sys.exit(1)
+            sys.exit(1)
     
     def detect_objects(self, frame, conf_threshold=0.25):
         """针对单帧图像检测物体"""

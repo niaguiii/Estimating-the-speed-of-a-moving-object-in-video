@@ -16,6 +16,13 @@ import numpy as np
 import os
 import argparse
 import sys
+
+# ⚠️ 必须先导入model_config设置环境变量
+try:
+    from . import model_config
+except ImportError:
+    import model_config
+
 from ultralytics import YOLO
 
 # 兼容相对导入和绝对导入
@@ -178,8 +185,9 @@ def process_video_phase3(input_path: str, output_path: str,
     
     # 1. 初始化YOLOv8
     print("\n[1/4] Loading YOLOv8...")
-    model = YOLO('yolov8n.pt')
-    print("✅ YOLOv8 loaded")
+    yolo_path = model_config.get_model_path('yolov8n.pt')
+    model = YOLO(yolo_path)
+    print(f"✅ YOLOv8 loaded from {yolo_path}")
     
     # 2. 初始化RAFT
     print("\n[2/4] Loading RAFT...")

@@ -14,6 +14,13 @@ import numpy as np
 import os
 import argparse
 import sys
+
+# ⚠️ 必须先导入model_config设置环境变量
+try:
+    from . import model_config
+except ImportError:
+    import model_config
+
 from ultralytics import YOLO
 
 
@@ -35,18 +42,12 @@ class YOLOv8ByteTrackDetector:
     def setup_model(self):
         """Setup YOLOv8 model"""
         try:
-            os.makedirs('models', exist_ok=True)
-            print(f"Loading YOLOv8 model: {self.model_name}")
+            # 使用model_config获取正确路径
+            yolo_path = model_config.get_model_path('yolov8n.pt')
+            print(f"Loading YOLOv8 model from: {yolo_path}")
             
-            if not os.path.exists(self.model_name):
-                print(f"Model not found, downloading to: {self.model_name}")
-                self.model = YOLO('yolov8n.pt')
-                import shutil
-                if os.path.exists('yolov8n.pt'):
-                    shutil.move('yolov8n.pt', self.model_name)
-                self.model = YOLO(self.model_name)
-            else:
-                self.model = YOLO(self.model_name)
+            # 直接加载（环境变量已设置，会自动下载到models/）
+            self.model = YOLO(yolo_path)
             
             self.classes = list(self.model.names.values())
             print(f"[OK] YOLOv8 model loaded")
