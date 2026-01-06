@@ -12,9 +12,14 @@ models/
 ├── hub/                         # ⏳ RAFT模型缓存（首次运行自动下载）
 │   └── checkpoints/
 │       └── raft_small_*.pth     # RAFT模型 (~100MB)
-└── models--depth-anything--*/   # ⏳ Depth模型缓存（首次运行自动下载）
-    └── snapshots/
-        └── */model.safetensors  # Depth Anything V2 (~400MB)
+│
+├── models--depth-anything--*/   # ⏳ Depth模型缓存（Mode 4自动下载）
+│   └── snapshots/
+│       └── */model.safetensors  # Depth Anything V2 (~400MB)
+│
+└── [PyTorch Hub Cache]          # ⏳ Metric3D v2缓存（Mode 5自动下载）
+    Location: ~/.cache/torch/hub/
+    Size: ~500MB (small) / ~1.3GB (large) / ~1.6GB (giant2)
 ```
 
 ---
@@ -35,7 +40,7 @@ models/
 - 已包含：`models/yolov8n.pt`
 - 克隆仓库后即可直接使用
 
-**使用场景：** 所有模式（Mode 1-4）
+**使用场景：** 所有模式（Mode 1-5）
 
 ---
 
@@ -47,7 +52,7 @@ models/
 | **大小** | ~100MB |
 | **用途** | 光流估计，摄像头运动分离 |
 | **来源** | PyTorch Torchvision |
-| **状态** | ⏳ 首次运行Mode 3/4时自动下载 |
+| **状态** | ⏳ 首次运行Mode 3/4/5时自动下载 |
 
 **下载位置：** 
 - 自动下载到：`models/hub/checkpoints/`
@@ -55,7 +60,8 @@ models/
 
 **使用场景：** 
 - Mode 3: RAFT Optical Flow（移动摄像头）
-- Mode 4: Depth Perception（最高精度）
+- Mode 4: RAFT + Depth Anything V2（相对深度）
+- Mode 5: RAFT + Metric3D v2（绝对深度）✨
 
 **下载时间：** 约1-2分钟（取决于网速）
 
@@ -76,9 +82,43 @@ models/
 - 由环境变量 `HF_HOME` 和 `TRANSFORMERS_CACHE` 控制
 
 **使用场景：** 
-- Mode 4: Depth Perception（最高精度）
+- Mode 4: RAFT + Depth Anything V2（相对深度，±10-15%精度）
 
 **下载时间：** 约2-5分钟（取决于网速和模型大小）
+
+---
+
+### 4. Metric3D v2 绝对深度估计模型 ⏳ 🔥
+
+| 属性 | 值 |
+|------|-----|
+| **文件** | 通过PyTorch Hub自动管理 |
+| **大小** | ~500MB (small) / ~1.3GB (large) / ~1.6GB (giant2) |
+| **用途** | 单目绝对深度估计（直接输出米数！）|
+| **来源** | GitHub (YvanYin/Metric3D) |
+| **状态** | ⏳ 首次运行Mode 5时自动下载 |
+
+**下载位置：** 
+- 自动下载到：`~/.cache/torch/hub/yvanyin_metric3d_main/`
+- 由PyTorch Hub自动管理（不在项目目录）
+
+**使用场景：** 
+- Mode 5: RAFT + Metric3D v2（绝对深度，±2-5%精度）✨✨
+- **最新最好！** 自动标定，输出真实米数
+
+**下载时间：** 约5-10分钟（取决于网速）
+
+**模型选项：**
+- `metric3d_vit_small` (~500MB) - 推荐，速度快
+- `metric3d_vit_large` (~1.3GB) - 平衡，精度高
+- `metric3d_vit_giant2` (~1.6GB) - 最高精度，较慢
+
+**技术优势：**
+- ✅ 输出绝对深度（米），不是相对值
+- ✅ 不需要场景标定（自动！）
+- ✅ 适应所有场景（零样本泛化）
+- ✅ 精度最高（±2-5% vs Mode 4的±10-15%）
+- ✅ 配合光流支持移动摄像头
 
 ---
 

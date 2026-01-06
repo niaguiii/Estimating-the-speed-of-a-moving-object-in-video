@@ -29,7 +29,7 @@ class YOLOv8ByteTrackDetector:
     
     def __init__(self, model_name='yolov8n.pt'):
         """Initialize detector"""
-        self.model_name = f"models/{model_name}"
+        self.model_name = model_name  # 模型名称（如'yolov8n.pt'）
         self.model = None
         self.classes = []
         
@@ -43,7 +43,7 @@ class YOLOv8ByteTrackDetector:
         """Setup YOLOv8 model"""
         try:
             # 使用model_config获取正确路径
-            yolo_path = model_config.get_model_path('yolov8n.pt')
+            yolo_path = model_config.get_model_path(self.model_name)
             print(f"Loading YOLOv8 model from: {yolo_path}")
             
             # 直接加载（环境变量已设置，会自动下载到models/）

@@ -24,14 +24,20 @@ Estimating-the-speed-of-a-moving-object-in-video/
 ├── 📁 src/                     # 核心处理代码
 │   ├── __init__.py
 │   ├── config.py              # 配置文件
-│   ├── main_opencv.py         # Phase 1 - OpenCV ONNX实现
-│   ├── main_yolov8_native.py  # Phase 1 - YOLOv8原生实现
-│   ├── main_yolov8_bytetrack.py  # Phase 2 - 检测+追踪
-│   ├── main_yolov8_speed.py   # Phase 2 - 速度估算
-│   ├── optical_flow_raft.py   # Phase 3 - RAFT光流模块
-│   ├── depth_estimation.py    # Phase 3 - 深度估计模块
-│   ├── main_yolov8_raft.py    # Phase 3 - RAFT光流版本
-│   └── main_phase3_complete.py  # Phase 3 - 深度感知完整版
+│   ├── model_config.py        # 模型配置统一管理
+│   │
+│   ├── mode1_detection_tracking.py   # Mode 1: 检测+追踪 (ByteTrack)
+│   ├── mode2_speed_estimation.py     # Mode 2: 速度估算 (物体尺寸)
+│   ├── mode3_raft_optical_flow.py    # Mode 3: RAFT光流测速
+│   ├── mode4_depth_anything_v2.py    # Mode 4: Depth Anything V2 (相对深度)
+│   ├── mode5_metric3d_v2.py          # Mode 5: Metric3D v2 (绝对深度)
+│   │
+│   ├── optical_flow_raft.py          # RAFT光流模块
+│   ├── depth_estimation.py           # Depth Anything V2模块
+│   ├── depth_estimation_metric3d.py  # Metric3D v2模块
+│   │
+│   ├── main_opencv.py         # Legacy: OpenCV ONNX实现
+│   └── main_yolov8_native.py  # Legacy: YOLOv8原生实现
 │
 ├── 📁 models/                  # AI模型文件
 │   ├── yolov8n.pt             # YOLOv8权重文件
@@ -115,11 +121,13 @@ data/
 ### 3. src/ - 核心处理代码 ✅
 ```
 src/
-├── Phase 1: main_opencv.py, main_yolov8_native.py
-├── Phase 2: main_yolov8_bytetrack.py, main_yolov8_speed.py
-├── Phase 3: optical_flow_raft.py, depth_estimation.py
-├── Phase 3: main_yolov8_raft.py, main_phase3_complete.py
-└── config.py（统一配置）
+├── Mode 1: mode1_detection_tracking.py    # 检测+追踪
+├── Mode 2: mode2_speed_estimation.py      # 速度估算
+├── Mode 3: mode3_raft_optical_flow.py     # RAFT光流
+├── Mode 4: mode4_depth_anything_v2.py     # Depth Anything V2
+├── Mode 5: mode5_metric3d_v2.py           # Metric3D v2
+├── Modules: optical_flow_raft.py, depth_estimation.py, depth_estimation_metric3d.py
+└── Config: config.py, model_config.py
 ```
 
 ### 4. web/ - Web应用 ⭐ Phase 4
@@ -190,7 +198,7 @@ npm run dev
 | 模块 | 文件数量 | 说明 |
 |------|---------|------|
 | 根目录 | 2个 | main.py + README.md |
-| src/ | 10个 | 核心处理代码 |
+| src/ | 13个 | 核心处理代码 (5个Mode + 3个模块 + 2个Legacy + 配置) |
 | web/ | 20+ | Vue组件+API |
 | scripts/ | 15+ | 安装脚本和工具 |
 | docs/ | 4个 | 项目文档 |

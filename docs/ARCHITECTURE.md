@@ -392,7 +392,7 @@ class DepthEstimator:
 
 ### 5. 速度计算引擎
 
-**实现文件：** `src/main_yolov8_speed.py`
+**实现文件：** `src/mode2_speed_estimation.py`
 
 ```python
 class SpeedCalculator:
@@ -467,8 +467,9 @@ class SpeedCalculator:
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │              核心处理模块 (src/)                         │
-│  main_yolov8_bytetrack.py | main_yolov8_speed.py       │
-│  main_yolov8_raft.py | main_phase3_complete.py         │
+│  mode1_detection_tracking.py | mode2_speed_estimation.py│
+│  mode3_raft_optical_flow.py | mode4_depth_anything_v2.py│
+│  mode5_metric3d_v2.py                                   │
 └─────────────────────────────────────────────────────────┘
 ```
 

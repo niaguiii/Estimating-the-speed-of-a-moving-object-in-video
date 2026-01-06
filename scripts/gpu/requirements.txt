@@ -29,11 +29,17 @@
 # torchvision>=0.15.0+cu118  # For RTX 40 series and below (Installed separately via --index-url)
 
 # ====================================================================
-# Phase 3: Optical Flow & Depth Estimation
+# Phase 3 & Mode 4: Optical Flow & Depth Estimation
 # ====================================================================
-timm>=0.9.0                   # PyTorch Image Models (Depth Anything)
+timm>=0.9.0                   # PyTorch Image Models (Depth Anything & Metric3D)
 transformers>=4.30.0          # Transformer models
 huggingface-hub>=0.19.0       # Model downloads
+
+# ====================================================================
+# Mode 5: Metric3D v2 (Absolute Depth Estimation) - Latest!
+# ====================================================================
+# timm==0.6.12                # Specific version for Metric3D v2 (already included above)
+scipy>=1.7.0                  # Scientific computing (for interpolation)
 
 # ====================================================================
 # Phase 1 & 2: Detection & Tracking
@@ -56,6 +62,18 @@ tqdm>=4.60.0                  # Progress bar
 # ====================================================================
 # accelerate>=0.20.0          # Multi-GPU training
 # xformers>=0.0.20            # Memory efficient attention
+
+# ====================================================================
+# Mode 5 Notes: Metric3D v2
+# ====================================================================
+# Metric3D v2 uses PyTorch Hub for automatic model download
+# First run will download model from GitHub (~500MB for 'small' model)
+# Models will be cached in: ~/.cache/torch/hub/
+# Supported models:
+#   - metric3d_vit_small (~500MB)  <- Recommended for Mode 5
+#   - metric3d_vit_large (~1.3GB)
+#   - metric3d_vit_giant2 (~1.6GB)
+# No additional installation needed, just run Mode 5!
 
 # ====================================================================
 # System Information

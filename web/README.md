@@ -344,7 +344,7 @@ curl http://localhost:8000/docs
 2. 用户选择模式2
 
 3. 后端开始处理
-   → 调用：src/main_yolov8_speed.py
+   → 调用：src/mode2_speed_estimation.py
    → 每2秒更新进度
 
 4. 处理完成（5分钟后）

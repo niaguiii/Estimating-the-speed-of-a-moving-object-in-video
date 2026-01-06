@@ -61,7 +61,44 @@ class Phase3SpeedEstimator:
         self.depth_history = {}   # 深度历史
         self.ema_alpha = 0.3      # EMA平滑系数
         
+        # 全局深度范围（解决归一化不稳定问题）
+        self.global_depth_min = None
+        self.global_depth_max = None
+        self.depth_ema_alpha = 0.05  # 深度范围EMA系数
+        
         print(f"[Phase3Estimator] Initialized with FPS={fps}")
+    
+    def normalize_depth_stable(self, depth_value: float, current_depth_map: np.ndarray) -> float:
+        """
+        稳定的深度归一化（使用全局深度范围）
+        
+        Args:
+            depth_value: 当前深度值
+            current_depth_map: 当前帧深度图
+            
+        Returns:
+            normalized_depth: 归一化深度（0-1）
+        """
+        # 初始化或更新全局深度范围（EMA平滑）
+        current_min = current_depth_map.min()
+        current_max = current_depth_map.max()
+        
+        if self.global_depth_min is None:
+            self.global_depth_min = current_min
+            self.global_depth_max = current_max
+        else:
+            # EMA更新全局范围
+            self.global_depth_min = (self.depth_ema_alpha * current_min + 
+                                    (1 - self.depth_ema_alpha) * self.global_depth_min)
+            self.global_depth_max = (self.depth_ema_alpha * current_max + 
+                                    (1 - self.depth_ema_alpha) * self.global_depth_max)
+        
+        # 使用全局范围归一化
+        if self.global_depth_max > self.global_depth_min:
+            normalized = (depth_value - self.global_depth_min) / (self.global_depth_max - self.global_depth_min)
+            return np.clip(normalized, 0, 1)
+        else:
+            return 0.5
     
     def estimate_pixel_to_meter_with_depth(self, bbox_width: float, bbox_height: float,
                                           class_name: str, depth_value: float) -> float:
@@ -72,7 +109,7 @@ class Phase3SpeedEstimator:
             bbox_width: 边界框宽度（像素）
             bbox_height: 边界框高度（像素）
             class_name: 物体类别
-            depth_value: 物体深度值（归一化）
+            depth_value: 物体深度值（归一化，0-1）
             
         Returns:
             pixel_per_meter: 像素/米比例
@@ -87,9 +124,13 @@ class Phase3SpeedEstimator:
         ppm_height = bbox_height / real_size['height']
         ppm_base = 0.7 * ppm_width + 0.3 * ppm_height
         
-        # 深度修正（深度越大，物体看起来越小，需要更大的ppm）
-        # 使用简单的线性关系
-        depth_correction = 1.0 + depth_value * 0.5  # 深度从0-1，修正从1.0-1.5
+        # 改进的深度修正（基于透视几何的近似）
+        # 假设深度值0.0=近处(5米), 1.0=远处(50米)
+        estimated_depth_meters = 5.0 + depth_value * 45.0  # 5-50米范围
+        reference_depth = 10.0  # 参考距离10米
+        
+        # 透视修正：depth_correction = estimated_depth / reference_depth
+        depth_correction = estimated_depth_meters / reference_depth
         
         ppm = ppm_base * depth_correction
         
@@ -138,12 +179,18 @@ class Phase3SpeedEstimator:
         # 计算运动距离（像素）
         distance_pixel = np.sqrt(dx_pixel**2 + dy_pixel**2)
         
-        # 深度动态修正（如果深度变化，调整距离）
+        # 改进的深度动态修正
         if len(self.depth_history[track_id]) >= 2:
             depth_change = self.depth_history[track_id][-1] - self.depth_history[track_id][-2]
-            # 深度减小（靠近），实际距离可能更大
-            # 深度增加（远离），实际距离可能更小
-            distance_pixel *= (1.0 - depth_change * 0.3)
+            # 深度变化修正（考虑Z轴运动）
+            # depth_change > 0: 远离（Z增加）
+            # depth_change < 0: 靠近（Z减少）
+            # 修正系数从经验值改为基于深度变化的合理估算
+            z_motion_factor = abs(depth_change) * 0.2  # 降低影响，从0.3改为0.2
+            if depth_change > 0:  # 远离
+                distance_pixel *= (1.0 + z_motion_factor)
+            else:  # 靠近
+                distance_pixel *= (1.0 - z_motion_factor)
         
         # 转换为米
         distance_meter = distance_pixel / ppm
@@ -274,8 +321,8 @@ def process_video_phase3(input_path: str, output_path: str,
                 
                 # 获取物体深度
                 depth_value = depth_estimator.get_object_depth(depth_map_cache, (x1, y1, x2, y2))
-                # 归一化深度值
-                depth_normalized = (depth_value - depth_map_cache.min()) / (depth_map_cache.max() - depth_map_cache.min())
+                # 使用稳定的归一化方法
+                depth_normalized = speed_estimator.normalize_depth_stable(depth_value, depth_map_cache)
                 
                 # 计算速度
                 speed = 0.0

@@ -36,19 +36,27 @@ def main():
     try:
         # 根据模式选择处理函数
         if mode == 1:
-            import main_yolov8_bytetrack
-            process_func = main_yolov8_bytetrack.process_video
+            # Mode 1: Detection + Tracking
+            import mode1_detection_tracking
+            process_func = mode1_detection_tracking.process_video
         elif mode == 2:
-            import main_yolov8_speed
-            process_func = main_yolov8_speed.process_video
+            # Mode 2: Speed Estimation
+            import mode2_speed_estimation
+            process_func = mode2_speed_estimation.process_video
         elif mode == 3:
-            import main_yolov8_raft
-            process_func = main_yolov8_raft.process_video
+            # Mode 3: RAFT Optical Flow
+            import mode3_raft_optical_flow
+            process_func = mode3_raft_optical_flow.process_video_with_raft
         elif mode == 4:
-            import main_phase3_complete
-            process_func = main_phase3_complete.process_video
+            # Mode 4: Depth Anything V2
+            import mode4_depth_anything_v2
+            process_func = mode4_depth_anything_v2.process_video_phase3
+        elif mode == 5:
+            # Mode 5: Metric3D v2
+            import mode5_metric3d_v2
+            process_func = mode5_metric3d_v2.process_video_metric3d
         else:
-            raise ValueError(f"不支持的模式: {mode}")
+            raise ValueError(f"不支持的模式: {mode}. 请选择1-5")
         
         # 处理视频（主程序会输出Frame进度到stdout）
         print(f"[Worker] 开始处理任务 {task_id}")
