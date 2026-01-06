@@ -21,6 +21,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 
 sys.path.insert(0, str(SRC_DIR))
 
+# ✅ 关键：切换工作目录到项目根目录！
+# 这样model_config.py的get_project_root()才能正确找到models/目录
+os.chdir(str(PROJECT_ROOT))
+print(f"[Worker] 工作目录: {os.getcwd()}")
+print(f"[Worker] 项目根目录: {PROJECT_ROOT}")
+
 def main():
     if len(sys.argv) < 5:
         print("Usage: process_worker.py <task_id> <input_path> <mode> <output_dir>")
@@ -34,6 +40,10 @@ def main():
     output_path = output_dir / f"{task_id}_output.mp4"
     
     try:
+        # 确认工作目录正确
+        print(f"[Worker] 当前工作目录: {os.getcwd()}")
+        print(f"[Worker] models目录存在: {os.path.exists('models')}")
+        
         # 根据模式选择处理函数
         if mode == 1:
             # Mode 1: Detection + Tracking

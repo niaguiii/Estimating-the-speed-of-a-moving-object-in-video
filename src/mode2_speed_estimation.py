@@ -373,9 +373,12 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
             tracks = detector.track_frame(frame, conf_threshold, tracker)
             stats = detector.get_speed_statistics(tracks)
             
-            # Debug output
-            if frame_count % 100 == 0 or frame_count == 1:
+            # ✅ 每30帧输出简单进度（约每秒1次，避免刷屏）
+            if frame_count % 30 == 0 or frame_count == 1:
                 print(f"Frame {frame_count}/{total_frames}: {len(tracks)} objects")
+            
+            # 每100帧输出详细速度信息
+            if frame_count % 100 == 0 or frame_count == 1:
                 for t in tracks:
                     if t['speed_kmh'] is not None:
                         print(f"  ID{t['id']} {t['class_name']}: {t['speed_kmh']:.1f} km/h")

@@ -166,7 +166,10 @@ async def start_process(request: ProcessRequest):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # 合并stderr到stdout
             text=True,
+            encoding='utf-8',  # ✅ 显式指定UTF-8编码（修复GBK错误）
+            errors='replace',  # ✅ 遇到无法解码的字符时用�替代（避免崩溃）
             bufsize=1,  # 行缓冲
+            cwd=str(PROJECT_ROOT),  # ✅ 设置工作目录为项目根目录（修复models路径问题）
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         
@@ -316,21 +319,42 @@ def monitor_stdout_progress(task_id: str, process: subprocess.Popen, total_frame
             print(line, end='')
             
             # 解析Frame输出
-            # 格式: "Frame 100: Tracking 3 objects"
-            match = re.search(r'Frame (\d+):', line)
-            if match:
-                current_frame = int(match.group(1))
+            # 支持两种格式：
+            # Mode 1: "Frame 100: Tracking 3 objects"
+            # Mode 2: "Frame 100/900: 3 objects" (包含总帧数)
+            
+            # 尝试匹配 Mode 2 格式（带总帧数）
+            match_with_total = re.search(r'Frame (\d+)/(\d+):', line)
+            if match_with_total:
+                current_frame = int(match_with_total.group(1))
+                total_in_output = int(match_with_total.group(2))
                 last_frame = current_frame
                 
-                if total_frames > 0:
-                    progress = (current_frame / total_frames) * 100
-                    tasks[task_id]["progress"] = round(progress, 1)
+                # ✅ 使用输出中的总帧数（更准确）
+                progress = (current_frame / total_in_output) * 100
+                tasks[task_id]["progress"] = round(progress, 1)
+                
+                # 计算实时速度
+                elapsed = time.time() - start_time
+                if elapsed > 0:
+                    fps = current_frame / elapsed
+                    tasks[task_id]["message"] = f"处理中... ({fps:.1f} 帧/秒)"
+            else:
+                # 尝试匹配 Mode 1 格式（不带总帧数）
+                match = re.search(r'Frame (\d+):', line)
+                if match:
+                    current_frame = int(match.group(1))
+                    last_frame = current_frame
                     
-                    # 计算实时速度
-                    elapsed = time.time() - start_time
-                    if elapsed > 0:
-                        fps = current_frame / elapsed
-                        tasks[task_id]["message"] = f"处理中... ({fps:.1f} 帧/秒)"
+                    if total_frames > 0:
+                        progress = (current_frame / total_frames) * 100
+                        tasks[task_id]["progress"] = round(progress, 1)
+                        
+                        # 计算实时速度
+                        elapsed = time.time() - start_time
+                        if elapsed > 0:
+                            fps = current_frame / elapsed
+                            tasks[task_id]["message"] = f"处理中... ({fps:.1f} 帧/秒)"
             
             # 检查是否被取消
             if cancel_flags.get(task_id, False):

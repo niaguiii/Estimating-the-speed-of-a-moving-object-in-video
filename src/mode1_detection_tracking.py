@@ -216,8 +216,12 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
             frame_count += 1
             tracks = detector.track_frame(frame, conf_threshold, tracker)
             
-            if frame_count % 100 == 0 or frame_count == 1:
+            # ✅ 每30帧输出简单进度（约每秒1次，避免刷屏）
+            if frame_count % 30 == 0 or frame_count == 1:
                 print(f"Frame {frame_count}: Tracking {len(tracks)} objects")
+            
+            # 每100帧输出详细信息
+            if frame_count % 100 == 0 or frame_count == 1:
                 for track in tracks:
                     vx, vy = detector.get_pixel_velocity(track['id'])
                     speed_px = np.sqrt(vx**2 + vy**2)
