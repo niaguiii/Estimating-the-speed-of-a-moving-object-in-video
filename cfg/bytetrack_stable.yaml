@@ -1,0 +1,17 @@
+# Ultralytics ByteTrack Optimized Configuration
+# 优化后的ByteTrack配置 - 提高ID稳定性，减少闪烁
+
+tracker_type: bytetrack  # (str) Tracker backend
+
+# ✅ 优化参数：提高ID稳定性
+track_high_thresh: 0.25   # (float) 第一阶段匹配阈值
+track_low_thresh: 0.1     # (float) 第二阶段低分匹配阈值
+new_track_thresh: 0.25    # (float) 新轨迹阈值
+track_buffer: 60          # (int) ✅ 增加到60帧（2秒@30fps）- 遮挡后保持更久
+match_thresh: 0.8         # (float) 关联相似度阈值（IoU）
+fuse_score: True          # (bool) 融合检测分数与运动/IoU
+
+# 说明：
+# - track_buffer=60: 物体被遮挡后，ID保持60帧（约2秒），减少ID切换
+# - 默认值是30帧，我们加倍以提高稳定性
+# - 如果视频中遮挡时间很长，可以进一步增加到90帧（3秒）

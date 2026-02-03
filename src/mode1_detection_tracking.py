@@ -72,13 +72,23 @@ class YOLOv8ByteTrackDetector:
         """
         self.frame_count += 1
         
+        # ✅ 优先使用项目内的优化配置，提高ID稳定性
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        custom_tracker = os.path.join(project_root, 'cfg', 'bytetrack_stable.yaml')
+        
+        if tracker == 'bytetrack' and os.path.exists(custom_tracker):
+            tracker_config = custom_tracker
+        else:
+            tracker_config = f"{tracker}.yaml"
+        
         # Use ultralytics built-in tracking
         results = self.model.track(
             frame, 
             persist=True,
             conf=conf_threshold,
             iou=0.5,
-            tracker=f"{tracker}.yaml",
+            tracker=tracker_config,
             verbose=False
         )
         
@@ -242,18 +252,27 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                 vx, vy = detector.get_pixel_velocity(track_id)
                 speed_px = np.sqrt(vx**2 + vy**2)
                 
-                label = f"ID{track_id} {class_name} {confidence:.2f}"
+                # ✅ 优化标签格式：更清晰易读
                 if speed_px > 0.5:
-                    label += f" ({speed_px:.1f}px/f)"
+                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f}) {speed_px:.1f}px/f"
+                else:
+                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f})"
                 
-                font_scale = 0.5
-                thickness = 1
-                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+                # ✅ 更美观的字体
+                font_scale = 0.6
+                thickness = 2
+                font = cv2.FONT_HERSHEY_DUPLEX
+                label_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
                 
-                cv2.rectangle(annotated_frame, (x, y - label_size[1] - 8),
-                            (x + label_size[0] + 4, y), color, -1)
-                cv2.putText(annotated_frame, label, (x + 2, y - 4),
-                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+                # 标签背景（半透明效果）
+                cv2.rectangle(annotated_frame, (x, y - label_size[1] - 10),
+                            (x + label_size[0] + 6, y), color, -1)
+                
+                # ✅ 文字加黑色描边（更清晰）
+                cv2.putText(annotated_frame, label, (x + 3, y - 5),
+                          font, font_scale, (0, 0, 0), thickness + 2)  # 黑色描边
+                cv2.putText(annotated_frame, label, (x + 3, y - 5),
+                          font, font_scale, (255, 255, 255), thickness)  # 白色文字
                 
                 # Draw trajectory
                 history = detector.get_track_history(track_id)
@@ -262,10 +281,12 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                     for i in range(1, len(points)):
                         cv2.line(annotated_frame, points[i-1], points[i], color, 2)
             
+            # ✅ 优化信息面板颜色（深青色更柔和）
+            panel_color = (0, 200, 200)  # 深青色，不刺眼
             cv2.putText(annotated_frame, f"Frame: {frame_count}/{total_frames}",
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                       (10, 30), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
             cv2.putText(annotated_frame, f"Objects: {len(tracks)} | Tracker: {tracker.upper()}",
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                       (10, 60), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
             
             if show_video:
                 cv2.imshow('YOLOv8 + ByteTrack', annotated_frame)

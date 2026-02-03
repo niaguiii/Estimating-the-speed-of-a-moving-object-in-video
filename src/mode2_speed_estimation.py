@@ -6,7 +6,7 @@ Phase 2 Implementation - Object Size Based Speed Estimation
 Features:
 - ByteTrack high-precision tracking
 - Auto speed estimation based on object size
-- Real-time speed display (km/h)
+- Real-time speed display (m/s)
 - Speed statistics panel
 - No manual calibration required
 
@@ -46,10 +46,31 @@ OBJECT_REAL_SIZES = {
     'dog': {'width': 0.5, 'height': 0.6},
     'cat': {'width': 0.4, 'height': 0.3},
     'horse': {'width': 2.0, 'height': 1.6},
+    'bird': {'width': 0.15, 'height': 0.15},
+    'cow': {'width': 1.5, 'height': 1.4},
+    'sheep': {'width': 1.0, 'height': 0.9},
     
-    # Other
+    # Traffic
     'traffic light': {'width': 0.3, 'height': 1.0},
     'stop sign': {'width': 0.6, 'height': 0.6},
+    'fire hydrant': {'width': 0.4, 'height': 0.7},
+    'parking meter': {'width': 0.2, 'height': 1.2},
+    
+    # Sports
+    'sports ball': {'width': 0.22, 'height': 0.22},  # 足球/篮球
+    'baseball bat': {'width': 0.07, 'height': 0.9},
+    'tennis racket': {'width': 0.3, 'height': 0.7},
+    'frisbee': {'width': 0.27, 'height': 0.27},
+    'skis': {'width': 0.1, 'height': 1.7},
+    'snowboard': {'width': 0.3, 'height': 1.5},
+    'skateboard': {'width': 0.2, 'height': 0.8},
+    'surfboard': {'width': 0.5, 'height': 2.0},
+    
+    # 常见物品（可选，精度较低）
+    # 'backpack': {'width': 0.3, 'height': 0.4},
+    # 'handbag': {'width': 0.3, 'height': 0.3},
+    # 'suitcase': {'width': 0.5, 'height': 0.7},
+    # 'umbrella': {'width': 1.0, 'height': 0.8},
 }
 
 
@@ -86,26 +107,25 @@ class SpeedEstimator:
         # Use the larger value (more reliable)
         return max(px_per_m_width, px_per_m_height)
     
-    def calculate_speed_kmh(self, pixel_velocity, pixels_per_meter):
+    def calculate_speed_ms(self, pixel_velocity, pixels_per_meter):
         """
-        Convert pixel velocity to km/h
+        Convert pixel velocity to m/s
         
         Args:
             pixel_velocity: Speed in pixels/frame
             pixels_per_meter: Calibration ratio
         
         Returns:
-            speed_kmh: Speed in km/h
+            speed_ms: Speed in m/s
         """
         if pixels_per_meter is None or pixels_per_meter <= 0:
             return None
         
-        # pixels/frame -> meters/second -> km/h
+        # pixels/frame -> meters/second
         meters_per_frame = pixel_velocity / pixels_per_meter
         meters_per_second = meters_per_frame * self.fps
-        km_per_hour = meters_per_second * 3.6
         
-        return km_per_hour
+        return meters_per_second
 
 
 class YOLOv8SpeedDetector:
@@ -125,10 +145,10 @@ class YOLOv8SpeedDetector:
         self.speed_estimator = SpeedEstimator(fps)
         
         # Speed records for statistics
-        self.speed_records = {}  # {track_id: [speed_kmh, ...]}
+        self.speed_records = {}  # {track_id: [speed_ms, ...]}
         
         # Speed smoothing cache - KEY for stable display
-        self.smoothed_speeds = {}  # {track_id: smoothed_speed_kmh}
+        self.smoothed_speeds = {}  # {track_id: smoothed_speed_ms}
         self.smooth_factor = 0.3  # EMA factor (lower = smoother, 0.2-0.4 recommended)
         
         self.setup_model()
@@ -156,12 +176,23 @@ class YOLOv8SpeedDetector:
         """Detect, track, and estimate speed"""
         self.frame_count += 1
         
+        # ✅ 优先使用项目内的优化配置，提高ID稳定性
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        custom_tracker = os.path.join(project_root, 'cfg', 'bytetrack_stable.yaml')
+        
+        if tracker == 'bytetrack' and os.path.exists(custom_tracker):
+            tracker_config = custom_tracker
+        else:
+            tracker_config = f"{tracker}.yaml"
+        
+        # Use ultralytics built-in tracking
         results = self.model.track(
             frame, 
             persist=True,
             conf=conf_threshold,
             iou=0.5,
-            tracker=f"{tracker}.yaml",
+            tracker=tracker_config,
             verbose=False
         )
         
@@ -192,7 +223,7 @@ class YOLOv8SpeedDetector:
                         'class_id': class_id,
                         'confidence': confidence,
                         'pixels_per_meter': px_per_m,
-                        'speed_kmh': None
+                        'speed_ms': None
                     }
                     
                     # Update history first
@@ -204,14 +235,14 @@ class YOLOv8SpeedDetector:
                     
                     raw_speed = None
                     if px_per_m is not None and pixel_speed > 0.3:  # Lower threshold
-                        raw_speed = self.speed_estimator.calculate_speed_kmh(pixel_speed, px_per_m)
+                        raw_speed = self.speed_estimator.calculate_speed_ms(pixel_speed, px_per_m)
                     
                     # Apply speed smoothing (EMA)
                     smoothed_speed = self._smooth_speed(track_id, raw_speed)
-                    track['speed_kmh'] = smoothed_speed
+                    track['speed_ms'] = smoothed_speed
                     
                     # Record speed for statistics
-                    if smoothed_speed is not None and smoothed_speed < 200:
+                    if smoothed_speed is not None and smoothed_speed < 60:  # 60 m/s = 216 km/h
                         if track_id not in self.speed_records:
                             self.speed_records[track_id] = []
                         self.speed_records[track_id].append(smoothed_speed)
@@ -313,7 +344,7 @@ class YOLOv8SpeedDetector:
     
     def get_speed_statistics(self, tracks):
         """Get speed statistics for current frame"""
-        speeds = [t['speed_kmh'] for t in tracks if t['speed_kmh'] is not None]
+        speeds = [t['speed_ms'] for t in tracks if t['speed_ms'] is not None]
         
         if len(speeds) == 0:
             return {'max': 0, 'avg': 0, 'count': 0}
@@ -380,8 +411,8 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
             # 每100帧输出详细速度信息
             if frame_count % 100 == 0 or frame_count == 1:
                 for t in tracks:
-                    if t['speed_kmh'] is not None:
-                        print(f"  ID{t['id']} {t['class_name']}: {t['speed_kmh']:.1f} km/h")
+                    if t['speed_ms'] is not None:
+                        print(f"  ID{t['id']} {t['class_name']}: {t['speed_ms']:.1f} m/s")
             
             # Draw annotations
             annotated_frame = frame.copy()
@@ -391,28 +422,42 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                 track_id = track['id']
                 class_name = track['class_name']
                 confidence = track['confidence']
-                speed_kmh = track['speed_kmh']
+                speed_ms = track['speed_ms']
                 
                 color = colors[track_id % len(colors)]
                 
                 # Draw bounding box
                 cv2.rectangle(annotated_frame, (x, y), (x + w, y + h), color, 2)
                 
-                # Create label with speed
-                if speed_kmh is not None:
-                    label = f"ID{track_id} {class_name} {speed_kmh:.1f}km/h"
-                else:
-                    label = f"ID{track_id} {class_name}"
+                # ✅ 优化标签格式：显示置信度+像素速度+真实速度
+                # 计算像素速度
+                history = detector.get_track_history(track_id)
+                pixel_speed = 0
+                if len(history) >= 2:
+                    dx = history[-1]['center'][0] - history[-2]['center'][0]
+                    dy = history[-1]['center'][1] - history[-2]['center'][1]
+                    pixel_speed = np.sqrt(dx**2 + dy**2)
                 
-                # Draw label background
+                if speed_ms is not None:
+                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f}) {pixel_speed:.1f}px/f | {speed_ms:.1f}m/s"
+                else:
+                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f})"
+                
+                # ✅ 更美观的字体
                 font_scale = 0.6
                 thickness = 2
-                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+                font = cv2.FONT_HERSHEY_DUPLEX
+                label_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
                 
+                # 标签背景
                 cv2.rectangle(annotated_frame, (x, y - label_size[1] - 10),
                             (x + label_size[0] + 6, y), color, -1)
+                
+                # ✅ 文字加黑色描边（更清晰）
                 cv2.putText(annotated_frame, label, (x + 3, y - 5),
-                          cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+                          font, font_scale, (0, 0, 0), thickness + 2)  # 黑色描边
+                cv2.putText(annotated_frame, label, (x + 3, y - 5),
+                          font, font_scale, (255, 255, 255), thickness)  # 白色文字
                 
                 # Draw trajectory
                 history = detector.get_track_history(track_id)
@@ -424,24 +469,25 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                         line_color = tuple(int(c * alpha) for c in color)
                         cv2.line(annotated_frame, points[i-1], points[i], line_color, 2)
             
-            # Draw statistics panel
+            # ✅ 优化信息面板颜色
+            panel_color = (0, 200, 200)  # 深青色
             panel_y = 30
             cv2.putText(annotated_frame, f"Frame: {frame_count}/{total_frames}",
-                       (10, panel_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                       (10, panel_y), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
             
             panel_y += 30
             cv2.putText(annotated_frame, f"Objects: {len(tracks)} | Tracker: ByteTrack",
-                       (10, panel_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                       (10, panel_y), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
             
             # Speed statistics panel
             if stats['count'] > 0:
                 panel_y += 30
-                cv2.putText(annotated_frame, f"Max Speed: {stats['max']:.1f} km/h",
-                           (10, panel_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(annotated_frame, f"Max Speed: {stats['max']:.1f} m/s",
+                           (10, panel_y), cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 255), 2)
                 
                 panel_y += 30
-                cv2.putText(annotated_frame, f"Avg Speed: {stats['avg']:.1f} km/h",
-                           (10, panel_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(annotated_frame, f"Avg Speed: {stats['avg']:.1f} m/s",
+                           (10, panel_y), cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 255), 2)
             
             # Mode indicator
             cv2.putText(annotated_frame, "Mode: Object-Size Estimation",
@@ -502,7 +548,7 @@ def main():
         print("=" * 60)
         print("[OK] ByteTrack high-precision tracking")
         print("[OK] Object-size based speed estimation")
-        print("[OK] Real-time speed display (km/h)")
+        print("[OK] Real-time speed display (m/s)")
         print(f"[OK] Output: {args.output}")
         print("=" * 60)
         print("\n[NOTE] This is simplified version (assumes stationary camera)")

@@ -149,7 +149,7 @@ class Phase3SpeedEstimator:
             depth_value: 物体深度值（归一化）
             
         Returns:
-            speed_kmh: 速度(km/h)
+            speed_ms: 速度(m/s)
         """
         x1, y1, x2, y2 = bbox
         bbox_width = x2 - x1
@@ -198,16 +198,13 @@ class Phase3SpeedEstimator:
         # 计算速度（米/秒）
         speed_ms = distance_meter * self.fps
         
-        # 转换为km/h
-        speed_kmh = speed_ms * 3.6
-        
         # EMA平滑
         if track_id in self.speed_history:
-            speed_kmh = self.ema_alpha * speed_kmh + (1 - self.ema_alpha) * self.speed_history[track_id]
+            speed_ms = self.ema_alpha * speed_ms + (1 - self.ema_alpha) * self.speed_history[track_id]
         
-        self.speed_history[track_id] = speed_kmh
+        self.speed_history[track_id] = speed_ms
         
-        return speed_kmh
+        return speed_ms
 
 
 def process_video_phase3(input_path: str, output_path: str,
@@ -326,6 +323,9 @@ def process_video_phase3(input_path: str, output_path: str,
                 
                 # 计算速度
                 speed = 0.0
+                real_dx = 0.0  # ✅ 初始化，避免后面使用时未定义
+                real_dy = 0.0
+                
                 if class_name in OBJECT_REAL_SIZES:
                     if track_id in track_positions:
                         prev_cx, prev_cy = track_positions[track_id]
@@ -349,15 +349,27 @@ def process_video_phase3(input_path: str, output_path: str,
                 color = (0, 255 - depth_color, depth_color)  # 近：绿色，远：红色
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # 绘制标签
-                label = f"ID:{track_id} {class_name}"
-                if speed > 0:
-                    label += f" {speed:.1f}km/h"
-                label += f" D:{depth_normalized:.2f}"
+                # ✅ 优化标签格式：显示置信度+像素速度+深度+真实速度
+                # 计算像素速度
+                pixel_speed = np.sqrt(real_dx**2 + real_dy**2) if track_id in track_positions else 0
                 
-                cv2.rectangle(annotated_frame, (x1, y1 - 25), (x1 + 250, y1), color, -1)
-                cv2.putText(annotated_frame, label, (x1 + 5, y1 - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                if speed > 0:
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {speed:.1f}m/s | D:{depth_normalized:.2f}"
+                else:
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) | D:{depth_normalized:.2f}"
+                
+                # ✅ 更美观的字体
+                font = cv2.FONT_HERSHEY_DUPLEX
+                font_scale = 0.6
+                thickness = 2
+                (label_w, label_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
+                cv2.rectangle(annotated_frame, (x1, y1 - label_h - 10), (x1 + label_w + 6, y1), color, -1)
+                
+                # ✅ 文字加黑色描边（更清晰）
+                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
+                           font, font_scale, (0, 0, 0), thickness + 2)  # 黑色描边
+                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
+                           font, font_scale, (255, 255, 255), thickness)  # 白色文字
         
         # 显示深度图
         if show_depth and frame_idx % depth_frequency == 1:
@@ -367,11 +379,12 @@ def process_video_phase3(input_path: str, output_path: str,
             cv2.putText(annotated_frame, "Depth Map", (width-width//4-10, height//4+25),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
         
-        # 信息显示
-        cv2.putText(annotated_frame, f"Frame: {frame_idx}/{total_frames} | Phase 3 Complete",
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        # ✅ 优化信息面板颜色
+        panel_color = (0, 200, 200)  # 深青色
+        cv2.putText(annotated_frame, f"Frame: {frame_idx}/{total_frames} | Depth Anything V2",
+                   (10, 30), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
         cv2.putText(annotated_frame, f"Camera: dx={camera_motion[0]:.1f} dy={camera_motion[1]:.1f}",
-                   (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                   (10, height - 10), cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 255), 2)
         
         # 写入和显示
         out.write(annotated_frame)

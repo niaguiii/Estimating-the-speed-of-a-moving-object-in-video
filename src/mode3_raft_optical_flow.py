@@ -102,7 +102,7 @@ class SpeedEstimatorWithRAFT:
             real_motion: RAFT补偿后的真实运动 (dx, dy) 像素
             
         Returns:
-            speed_kmh: 速度(km/h)，如果无法计算返回0
+            speed_ms: 速度(m/s)，如果无法计算返回0
         """
         x1, y1, x2, y2 = bbox
         bbox_width = x2 - x1
@@ -129,16 +129,13 @@ class SpeedEstimatorWithRAFT:
         # 计算速度（米/秒）
         speed_ms = distance_meter * self.fps
         
-        # 转换为km/h
-        speed_kmh = speed_ms * 3.6
-        
         # EMA平滑
         if track_id in self.speed_history:
-            speed_kmh = self.ema_alpha * speed_kmh + (1 - self.ema_alpha) * self.speed_history[track_id]
+            speed_ms = self.ema_alpha * speed_ms + (1 - self.ema_alpha) * self.speed_history[track_id]
         
-        self.speed_history[track_id] = speed_kmh
+        self.speed_history[track_id] = speed_ms
         
-        return speed_kmh
+        return speed_ms
 
 
 def process_video_with_raft(input_path: str, output_path: str, 
@@ -249,6 +246,9 @@ def process_video_with_raft(input_path: str, output_path: str,
                 
                 # 计算物体的真实运动（RAFT补偿）
                 speed = 0.0
+                real_dx = 0.0  # ✅ 初始化，避免后面使用时未定义
+                real_dy = 0.0
+                
                 if class_name in OBJECT_REAL_SIZES:
                     # 计算表观运动（使用track历史位置）
                     if track_id in track_positions:
@@ -274,30 +274,42 @@ def process_video_with_raft(input_path: str, output_path: str,
                 color = (0, 255, 0) if speed > 0 else (255, 0, 0)
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # 绘制标签
-                label = f"ID:{track_id} {class_name} {conf:.2f}"
+                # ✅ 优化标签格式：显示置信度+像素速度+真实速度
+                # 计算像素速度
+                pixel_speed = np.sqrt(real_dx**2 + real_dy**2) if track_id in track_positions else 0
+                
                 if speed > 0:
-                    label += f" {speed:.1f}km/h"
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {speed:.1f}m/s"
+                else:
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f})"
                 
-                # 背景
-                (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                # ✅ 更美观的字体
+                font = cv2.FONT_HERSHEY_DUPLEX
+                font_scale = 0.6
+                thickness = 2
+                (label_w, label_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
                 cv2.rectangle(annotated_frame, (x1, y1 - label_h - 10), 
-                            (x1 + label_w, y1), color, -1)
+                            (x1 + label_w + 6, y1), color, -1)
                 
-                # 文字
-                cv2.putText(annotated_frame, label, (x1, y1 - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                # ✅ 文字加黑色描边（更清晰）
+                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
+                           font, font_scale, (0, 0, 0), thickness + 2)  # 黑色描边
+                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
+                           font, font_scale, (255, 255, 255), thickness)  # 白色文字
+        
+        # ✅ 优化信息面板颜色
+        panel_color = (0, 200, 200)  # 深青色
         
         # 绘制摄像头运动信息
         if camera_motion != (0.0, 0.0):
             cam_text = f"Camera Motion: dx={camera_motion[0]:.1f} dy={camera_motion[1]:.1f}"
             cv2.putText(annotated_frame, cam_text, (10, height - 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                       cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 255), 2)
         
         # 绘制帧信息
         info_text = f"Frame: {frame_idx}/{total_frames} | RAFT+YOLOv8"
         cv2.putText(annotated_frame, info_text, (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                   cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
         
         # 写入视频
         out.write(annotated_frame)
