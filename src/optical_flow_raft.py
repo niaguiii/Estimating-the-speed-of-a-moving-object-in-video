@@ -89,6 +89,16 @@ class RAFTOpticalFlow:
         Returns:
             flow: 光流场 (H, W, 2) 其中flow[:,:,0]是x方向，flow[:,:,1]是y方向
         """
+        orig_h, orig_w = frame1.shape[:2]
+        
+        # RAFT要求宽高都能被8整除，不足则pad
+        pad_h = (8 - orig_h % 8) % 8
+        pad_w = (8 - orig_w % 8) % 8
+        
+        if pad_h > 0 or pad_w > 0:
+            frame1 = cv2.copyMakeBorder(frame1, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
+            frame2 = cv2.copyMakeBorder(frame2, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
+        
         with torch.no_grad():
             # 预处理
             img1 = self.preprocess_frame(frame1)
@@ -102,6 +112,10 @@ class RAFTOpticalFlow:
             
             # (2, H, W) -> (H, W, 2)
             flow = np.transpose(flow, (1, 2, 0))
+        
+        # 裁剪回原始尺寸
+        if pad_h > 0 or pad_w > 0:
+            flow = flow[:orig_h, :orig_w]
             
         return flow
     

@@ -14,6 +14,8 @@ import numpy as np
 import os
 import argparse
 import sys
+import csv
+from pathlib import Path
 
 # ⚠️ 必须先导入model_config设置环境变量
 try:
@@ -209,6 +211,7 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
     frame_count = 0
+    csv_rows = []
     
     colors = [
         (255, 0, 0), (0, 255, 0), (0, 0, 255),
@@ -251,6 +254,16 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                 
                 vx, vy = detector.get_pixel_velocity(track_id)
                 speed_px = np.sqrt(vx**2 + vy**2)
+                
+                if output_path:
+                    csv_rows.append({
+                        'frame': frame_count,
+                        'track_id': int(track_id),
+                        'class_name': class_name,
+                        'confidence': round(float(confidence), 4),
+                        'x1': x, 'y1': y, 'x2': x + w, 'y2': y + h,
+                        'pixel_speed_px_per_frame': round(float(speed_px), 3),
+                    })
                 
                 # ✅ 优化标签格式：更清晰易读
                 if speed_px > 0.5:
@@ -305,6 +318,14 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
         if out:
             out.release()
         cv2.destroyAllWindows()
+    
+    if output_path and csv_rows:
+        csv_path = str(Path(output_path).with_suffix('.csv'))
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(csv_rows)
+        print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n[OK] Processing complete, {frame_count} frames processed")
     return True

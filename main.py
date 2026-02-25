@@ -7,7 +7,7 @@
 - ByteTrack 高精度追踪
 - 速度估算 (km/h)
 
-五种处理模式:
+六种处理模式:
 1. Mode 1: 检测+追踪 (mode1_detection_tracking.py)
    - YOLOv8 + ByteTrack
    
@@ -22,6 +22,9 @@
    
 5. Mode 5: Metric3D v2 (mode5_metric3d_v2.py) 🔥
    - YOLOv8 + RAFT + Metric3D v2 (绝对深度，±2-5%，最新最好！)
+
+6. Mode 6: 自车测速 (mode6_ego_speed.py)
+   - RAFT + Metric3D v2，无需YOLO，路面光流测自车速度
 """
 import os
 import sys
@@ -231,11 +234,17 @@ def select_model_version():
     print("     - Highest accuracy (±2-5%)")
     print("     - Universal scene support")
     print("")
+    print("  6. Ego-Vehicle Speed (mode6_ego_speed.py)")
+    print("     - NO YOLO detection needed")
+    print("     - RAFT + Metric3D v2 on road surface")
+    print("     - Measures YOUR OWN vehicle speed")
+    print("     - Ideal for dashcam footage")
+    print("")
     print("=" * 60)
     
     while True:
         try:
-            choice = input("\nSelect mode (1-5, default 5): ").strip()
+            choice = input("\nSelect mode (1-6, default 5): ").strip()
             if not choice:
                 choice = '5'  # Default: Metric3D v2 (最新最好)
                 
@@ -249,20 +258,23 @@ def select_model_version():
                 return 'phase3'
             elif choice == '5':
                 return 'metric3d'
+            elif choice == '6':
+                return 'ego'
             else:
-                print("[ERROR] Please enter 1-5")
+                print("[ERROR] Please enter 1-6")
         except ValueError:
             print("[ERROR] Invalid input")
 
 def main():
     """
-    主函数 - 支持五种处理模式
+    主函数 - 支持六种处理模式
     
     Mode 1: mode1_detection_tracking.py    - 检测+追踪
     Mode 2: mode2_speed_estimation.py      - 速度估算
     Mode 3: mode3_raft_optical_flow.py     - RAFT光流
     Mode 4: mode4_depth_anything_v2.py     - Depth Anything V2
     Mode 5: mode5_metric3d_v2.py           - Metric3D v2 (推荐)
+    Mode 6: mode6_ego_speed.py             - 自车测速
     """
     show_menu()
     
@@ -284,11 +296,12 @@ def main():
     
     # 根据版本添加标识
     version_suffix = {
-        'tracking': '_tracking',
-        'speed': '_speed',
-        'raft': '_raft',
-        'phase3': '_phase3',
-        'metric3d': '_metric3d'
+        'tracking': '_mode1',
+        'speed': '_mode2',
+        'raft': '_mode3',
+        'phase3': '_mode4',
+        'metric3d': '_mode5',
+        'ego': '_mode6'
     }
     output_path = f"{base_name}{version_suffix.get(model_version, '')}.mp4"
     
@@ -298,7 +311,8 @@ def main():
         'speed': 'Mode 2: YOLOv8 + ByteTrack + Speed',
         'raft': 'Mode 3: RAFT Optical Flow + Speed',
         'phase3': 'Mode 4: RAFT + Depth Anything V2 (Relative Depth)',
-        'metric3d': 'Mode 5: RAFT + Metric3D v2 (Absolute Depth - BEST!)'
+        'metric3d': 'Mode 5: RAFT + Metric3D v2 (Absolute Depth - BEST!)',
+        'ego': 'Mode 6: Ego-Vehicle Speed (RAFT + Metric3D, No YOLO)'
     }
     
     print(f"\n" + "=" * 60)
@@ -360,6 +374,18 @@ def main():
                 show_video=show_window,
                 conf_threshold=0.25
             )
+        elif model_version == 'ego':
+            # Mode 6: Ego-Vehicle Speed (no YOLO)
+            from src.mode6_ego_speed import process_video_ego_speed
+            success = process_video_ego_speed(
+                input_path=selected_video,
+                output_path=output_path,
+                show_video=show_window,
+                fov_degrees=70.0,
+                depth_frequency=10,
+                road_region_ratio=0.4,
+                model_size='small'
+            )
         else:  # tracking
             # Mode 1: Detection + Tracking
             from src.mode1_detection_tracking import process_video
@@ -377,7 +403,10 @@ def main():
             print(f"[OK] Output saved: {output_path}")
             print(f"[OK] Mode: {mode_names.get(model_version, model_version)}")
             
-            if model_version == 'metric3d':
+            if model_version == 'ego':
+                print("[OK] Ego speed: RAFT + Metric3D v2 road surface sampling")
+                print("[OK] No YOLO detection needed - measures your own vehicle speed!")
+            elif model_version == 'metric3d':
                 print("[OK] RAFT + Metric3D v2 + 3D Speed estimation enabled")
                 print("[OK] Absolute depth (meters) - No calibration needed!")
             elif model_version == 'phase3':

@@ -16,6 +16,8 @@ import numpy as np
 import os
 import argparse
 import sys
+import csv
+from pathlib import Path
 
 # ⚠️ 必须先导入model_config设置环境变量
 try:
@@ -271,6 +273,7 @@ def process_video_phase3(input_path: str, output_path: str,
     prev_frame = None
     track_positions = {}
     depth_map_cache = None
+    csv_rows = []
     
     while True:
         ret, frame = cap.read()
@@ -344,6 +347,19 @@ def process_video_phase3(input_path: str, output_path: str,
                     
                     track_positions[track_id] = (cx, cy)
                 
+                csv_rows.append({
+                    'frame': frame_idx,
+                    'track_id': int(track_id),
+                    'class_name': class_name,
+                    'confidence': round(float(conf), 4),
+                    'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                    'camera_dx': round(float(camera_motion[0]), 3),
+                    'camera_dy': round(float(camera_motion[1]), 3),
+                    'depth_normalized': round(float(depth_normalized), 4),
+                    'speed_ms': round(float(speed), 3),
+                    'speed_kmh': round(float(speed * 3.6), 3),
+                })
+                
                 # 绘制边界框（颜色根据深度）
                 depth_color = int(depth_normalized * 255)
                 color = (0, 255 - depth_color, depth_color)  # 近：绿色，远：红色
@@ -400,6 +416,14 @@ def process_video_phase3(input_path: str, output_path: str,
     out.release()
     if show_video:
         cv2.destroyAllWindows()
+    
+    if csv_rows:
+        csv_path = str(Path(output_path).with_suffix('.csv'))
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(csv_rows)
+        print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n{'=' * 60}")
     print(f"✅ Phase 3 Processing Complete!")
