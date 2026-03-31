@@ -18,6 +18,8 @@ import argparse
 import sys
 import csv
 from pathlib import Path
+from datetime import datetime
+from collections import deque, defaultdict
 
 # ⚠️ 必须先导入model_config设置环境变量
 try:
@@ -39,31 +41,38 @@ except ImportError:
 class Metric3DSpeedEstimator:
     """Metric3D 3D速度估计器（真实3D空间测速）"""
     
-    def __init__(self, fps: float = 30.0):
+    def __init__(self, fps: float = 30.0, display_interval: int = 8, window_size: int = 7):
         """
         初始化
-        
+
         Args:
             fps: 视频帧率
+            window_size: 滑动窗口帧数（默认7，约0.23s@30fps，拉长测量基线降低噪声）
+            display_interval: 视频标签每N帧刷新一次显示速度（默认8，减少视觉跳动）
         """
         self.fps = fps
-        self.speed_history = {}     # 速度历史（EMA平滑用）
-        self.position_history = {}  # 3D位置历史 (X, Y, Z)
+        self.window_size = window_size
+        self.position_window = {}   # 每个track的3D位置滑动窗口 {id: deque}
+        self.speed_history = {}     # 速度历史（轻EMA用）
         self.depth_history = {}     # 每个物体的平滑深度
-        self.track_frame_count = {} # 每个track被观测的帧数（用于冷启动判断）
-        self.warmup_frames = 10     # 前N帧使用高alpha快速收敛
-        self.warmup_alpha = 0.35    # 冷启动阶段EMA系数（快速爬升）
-        self.steady_alpha = 0.15    # 稳定阶段EMA系数（平滑，比原0.1稍大）
-        self.display_delay = 3      # 前N帧不输出速度（隐藏初始化噪声）
-        self.depth_alpha = 0.15     # 深度EMA系数（平滑深度跳变）
-        
-        print(f"[Metric3DEstimator] Initialized with FPS={fps}")
+        self.track_frame_count = {} # 每个track被观测的帧数
+        self.depth_alpha = 0.15     # 深度EMA系数（平滑深度台阶跳变）
+        self.ema_alpha = 0.4        # 轻EMA速度系数（窗口已滤噪，无需重度平滑）
+        self.display_delay = max(3, window_size - 1)  # 满窗口后再输出，避免短基线噪声进入CSV
+        self.display_interval = display_interval
+        self.display_speed_history = {}
+        self.display_counter = {}
+        self.last_valid_frame = {}  # 记录每个track最后有效深度帧号，用于遮挡检测（depth=0不计入）
+
+        print(f"[Metric3DEstimator] FPS={fps}, window={window_size}f "
+              f"({window_size/fps*1000:.0f}ms), display_interval={display_interval}f")
     
     def calculate_3d_speed(self, track_id: int,
                           current_pos_2d: tuple,
                           current_depth: float,
                           camera_motion_2d: tuple,
-                          intrinsics: dict) -> float:
+                          intrinsics: dict,
+                          frame_idx: int = 0) -> float:
         """
         计算完整3D速度（m/s），包含 XYZ 三个方向。
 
@@ -86,9 +95,11 @@ class Metric3DSpeedEstimator:
         cx_cam = intrinsics['cx']
         cy_cam = intrinsics['cy']
 
-        # ── 每物体深度 EMA 平滑 ──────────────────────────────
-        # 深度缓存每N帧才更新，直接用会有台阶式跳变
-        # EMA让深度变化平缓，但仍能追踪真实的靠近/远离运动
+        # ── 深度无效防护：depth=0 不更新任何状态，间隔检测仅基于有效帧 ──
+        if current_depth <= 0:
+            return 0.0
+
+        # ── 深度 EMA 平滑（缓解每N帧深度更新时的台阶跳变）────
         if track_id in self.depth_history:
             smooth_depth = (self.depth_alpha * current_depth
                             + (1 - self.depth_alpha) * self.depth_history[track_id])
@@ -96,68 +107,83 @@ class Metric3DSpeedEstimator:
             smooth_depth = current_depth
         self.depth_history[track_id] = smooth_depth
 
-        # ── 摄像头运动补偿后的像素位置 → 3D 坐标 ────────────
+        # ── 摄像头运动补偿 → 3D 坐标 ─────────────────────────
         comp_cx = cx - camera_motion_2d[0]
         comp_cy = cy - camera_motion_2d[1]
-
         X = (comp_cx - cx_cam) * smooth_depth / fx
         Y = (comp_cy - cy_cam) * smooth_depth / fy
         Z = smooth_depth
 
-        current_pos_3d = (X, Y, Z)
+        # ── 遮挡检测：有效帧间隔 > 1 → 清空滑动窗口 ─────────
+        if track_id in self.last_valid_frame:
+            if frame_idx - self.last_valid_frame[track_id] > 1:
+                if track_id in self.position_window:
+                    self.position_window[track_id].clear()
+                self.speed_history.pop(track_id, None)
+                self.track_frame_count[track_id] = 0
+                self.display_speed_history[track_id] = 0.0
+                self.display_counter[track_id] = 0
+        self.last_valid_frame[track_id] = frame_idx
 
-        # ── 更新帧计数 ────────────────────────────────────
+        # ── 更新帧计数 + 位置滑动窗口 ────────────────────────
         self.track_frame_count[track_id] = self.track_frame_count.get(track_id, 0) + 1
         frame_count = self.track_frame_count[track_id]
 
-        # 分段 EMA alpha：冷启动快速收敛，稳定后保守平滑
-        alpha = self.warmup_alpha if frame_count <= self.warmup_frames else self.steady_alpha
-        in_warmup = frame_count <= self.warmup_frames
+        if track_id not in self.position_window:
+            self.position_window[track_id] = deque(maxlen=self.window_size)
+        self.position_window[track_id].append((X, Y, Z))
 
-        # ── 计算帧间3D距离 → 速度 ───────────────────────────
-        if track_id in self.position_history:
-            prev = self.position_history[track_id]
-            dx = X - prev[0]
-            dy = Y - prev[1]
-            dz = Z - prev[2]
-
+        # ── 滑动窗口速度：最旧→最新位移 / 窗口帧数 ──────────
+        # 测量基线 = window_size/fps 秒，比逐帧差分噪声低约 √window_size 倍
+        # 无冷启动从0爬升问题：窗口积累到2帧即可给出有效速度
+        window = self.position_window[track_id]
+        if len(window) >= 2:
+            oldest = window[0]
+            n_frames = len(window) - 1
+            dx = X - oldest[0]
+            dy = Y - oldest[1]
+            dz = Z - oldest[2]
             distance_3d = np.sqrt(dx**2 + dy**2 + dz**2)
-            raw_speed = distance_3d * self.fps
+            raw_speed = distance_3d * self.fps / n_frames
 
-            # 异常值抑制：冷启动期不限制（允许快速爬升），稳定后限3倍
-            # 3x 对汽车/跑步/骑车场景足够（人/车每帧速度变化远小于3倍）
-            # TODO[未来]: 网页端加"高动态模式"开关，检测羽毛球/球类等爆发性场景时
-            #   禁用此限制，同时提高 warmup_alpha（如0.5），适配毫秒级速度突变
-            if (not in_warmup
-                    and track_id in self.speed_history
-                    and self.speed_history[track_id] > 0.1):
-                raw_speed = min(raw_speed, self.speed_history[track_id] * 3.0)
-
-            # 速度 EMA 平滑
+            # 轻EMA：窗口已滤大部分噪声，α=0.4 兼顾平滑与快速响应
             if track_id in self.speed_history:
-                speed_ms = (alpha * raw_speed
-                            + (1 - alpha) * self.speed_history[track_id])
+                speed_ms = (self.ema_alpha * raw_speed
+                            + (1 - self.ema_alpha) * self.speed_history[track_id])
             else:
                 speed_ms = raw_speed
-
             self.speed_history[track_id] = speed_ms
         else:
             speed_ms = 0.0
 
-        self.position_history[track_id] = current_pos_3d
+        # ── 显示速度：每 display_interval 帧刷新一次 ─────────
+        if track_id not in self.display_counter:
+            self.display_counter[track_id] = 0
+            self.display_speed_history[track_id] = 0.0
+        self.display_counter[track_id] += 1
+        if self.display_counter[track_id] >= self.display_interval:
+            self.display_speed_history[track_id] = speed_ms
+            self.display_counter[track_id] = 0
 
-        # 前 display_delay 帧不对外输出速度（隐藏初始化噪声）
+        # 前 display_delay 帧不对外输出速度（隐藏窗口积累期噪声）
         if frame_count <= self.display_delay:
             return 0.0
         return speed_ms
+
+    def get_display_speed(self, track_id: int) -> float:
+        """返回视频标签用的稳定显示速度（每 display_interval 帧刷新一次）"""
+        if self.track_frame_count.get(track_id, 0) <= self.display_delay:
+            return 0.0
+        return self.display_speed_history.get(track_id, 0.0)
 
 
 def process_video_metric3d(input_path: str, output_path: str,
                            show_video: bool = True,
                            conf_threshold: float = 0.25,
                            show_depth: bool = True,
-                           depth_frequency: int = 10,
-                           model_size: str = 'small'):
+                           depth_frequency: int = 5,
+                           model_size: str = 'small',
+                           fov_degrees: float = 60.0):
     """
     Phase 3 Metric3D处理：RAFT + Metric3D v2 + YOLOv8
     
@@ -169,6 +195,7 @@ def process_video_metric3d(input_path: str, output_path: str,
         show_depth: 是否显示深度图
         depth_frequency: 深度估计频率（每N帧）
         model_size: Metric3D模型大小 ('small', 'large', 'giant2')
+        fov_degrees: 相机水平视场角（度），由等效全画幅焦段换算而来
     """
     print("=" * 60)
     print("Phase 3 Metric3D: RAFT + Metric3D v2 + YOLOv8")
@@ -197,7 +224,10 @@ def process_video_metric3d(input_path: str, output_path: str,
         print(f"❌ Failed to open: {input_path}")
         return False
     
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    fps = float(cap.get(cv2.CAP_PROP_FPS))
+    if fps <= 0:
+        print("⚠️  FPS not detected from container, defaulting to 25.0")
+        fps = 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -205,9 +235,13 @@ def process_video_metric3d(input_path: str, output_path: str,
     print(f"✅ Video: {width}x{height} @ {fps}FPS, {total_frames} frames")
     
     # 估算相机内参（如果没有实际内参）
-    intrinsics = depth_estimator.estimate_camera_intrinsics(width, height, fov_degrees=60.0)
+    intrinsics = depth_estimator.estimate_camera_intrinsics(width, height, fov_degrees=fov_degrees)
+    print(f"[Intrinsics] FOV={fov_degrees}°  fx={intrinsics['fx']:.1f}  fy={intrinsics['fy']:.1f}")
     
     # 5. 初始化输出
+    run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    _op = Path(output_path)
+    output_path = str(_op.with_name(_op.stem + '_' + run_ts + _op.suffix))
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
@@ -222,6 +256,9 @@ def process_video_metric3d(input_path: str, output_path: str,
     track_positions = {}
     depth_map_cache = None
     csv_rows = []
+    crops_dir = str(Path(output_path).with_suffix('')) + '_crops'
+    os.makedirs(crops_dir, exist_ok=True)
+    first_crop_paths = {}
     
     while True:
         ret, frame = cap.read()
@@ -270,20 +307,30 @@ def process_video_metric3d(input_path: str, output_path: str,
                 # 获取物体深度（米！）
                 depth_meters = depth_estimator.get_object_depth(depth_map_cache, (x1, y1, x2, y2))
                 
-                # 计算3D速度
-                speed = 0.0
-                if track_id in track_positions:
-                    # 使用Metric3D v2的真实深度计算3D速度
-                    speed = speed_estimator.calculate_3d_speed(
-                        track_id=track_id,
-                        current_pos_2d=(cx, cy),
-                        current_depth=depth_meters,  # 真实深度（米）
-                        camera_motion_2d=camera_motion,
-                        intrinsics=intrinsics
-                    )
+                # 计算3D速度（滑动窗口内部处理首帧，无需外部守卫）
+                prev_pos_2d = track_positions.get(track_id)
+                speed = speed_estimator.calculate_3d_speed(
+                    track_id=track_id,
+                    current_pos_2d=(cx, cy),
+                    current_depth=depth_meters,  # 真实深度（米）
+                    camera_motion_2d=camera_motion,
+                    intrinsics=intrinsics,
+                    frame_idx=frame_idx
+                )
                 
+                if track_id not in track_positions:
+                    pad = 8
+                    crop = frame[max(0, y1-pad):min(height, y2+pad),
+                                 max(0, x1-pad):min(width, x2+pad)]
+                    crop_name = f"track_{track_id}_{class_name}.jpg"
+                    crop_path = os.path.join(crops_dir, crop_name)
+                    cv2.imwrite(crop_path, crop)
+                    first_crop_paths[track_id] = crop_path
+
                 track_positions[track_id] = (cx, cy)
+                display_speed = speed_estimator.get_display_speed(track_id)
                 
+                smooth_depth = speed_estimator.depth_history.get(track_id, depth_meters)
                 csv_rows.append({
                     'frame': frame_idx,
                     'track_id': int(track_id),
@@ -294,9 +341,8 @@ def process_video_metric3d(input_path: str, output_path: str,
                     'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
                     'camera_dx': round(float(camera_motion[0]), 3),
                     'camera_dy': round(float(camera_motion[1]), 3),
-                    'depth_meters': round(float(depth_meters), 3),
+                    'depth_meters': round(float(smooth_depth), 3),
                     'speed_ms': round(float(speed), 3),
-                    'speed_kmh': round(float(speed * 3.6), 3),
                 })
                 
                 # 绘制边界框（颜色根据深度）
@@ -309,20 +355,18 @@ def process_video_metric3d(input_path: str, output_path: str,
                 
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # ✅ 优化标签格式：显示置信度+像素速度+真实距离+3D速度
-                # 计算像素速度
-                pixel_speed = 0
-                if track_id in track_positions:
-                    prev_cx, prev_cy = track_positions[track_id]
-                    # 表观运动 - 摄像头运动 = 真实运动
+                # 计算像素速度（修复：使用保存的上一帧位置，而非已更新的当前位置）
+                pixel_speed = 0.0
+                if prev_pos_2d is not None:
+                    prev_cx, prev_cy = prev_pos_2d
                     real_dx = (cx - prev_cx) - camera_motion[0]
                     real_dy = (cy - prev_cy) - camera_motion[1]
                     pixel_speed = np.sqrt(real_dx**2 + real_dy**2)
                 
-                if speed > 0:
-                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {speed:.1f}m/s | {depth_meters:.1f}m"
+                if display_speed > 0:
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {display_speed:.1f}m/s | {smooth_depth:.1f}m"
                 else:
-                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) | {depth_meters:.1f}m"
+                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) | {smooth_depth:.1f}m"
                 
                 # ✅ 更美观的字体
                 font = cv2.FONT_HERSHEY_DUPLEX
@@ -360,7 +404,10 @@ def process_video_metric3d(input_path: str, output_path: str,
                 break
         
         if frame_idx % 30 == 0:
-            print(f"Progress: {frame_idx/total_frames*100:.1f}% ({frame_idx}/{total_frames})", end='\r')
+            if total_frames > 0:
+                print(f"Progress: {frame_idx/total_frames*100:.1f}% ({frame_idx}/{total_frames})", end='\r')
+            else:
+                print(f"Progress: {frame_idx} frames processed", end='\r')
     
     cap.release()
     out.release()
@@ -379,35 +426,35 @@ def process_video_metric3d(input_path: str, output_path: str,
         print(f"[CSV] Per-frame: {frames_csv_path} ({len(csv_rows)} rows)")
 
         # ── CSV 2: 按车辆汇总（每行=一辆车的统计）────────────────
-        from collections import defaultdict
         vehicle_data = defaultdict(list)
         for row in csv_rows:
             vehicle_data[row['track_id']].append(row)
 
-        vehicle_rows = []
+        object_rows = []
         for tid, rows in sorted(vehicle_data.items()):
-            moving = [r for r in rows if r['speed_kmh'] > 1.0]
-            speeds_kmh = [r['speed_kmh'] for r in moving] if moving else [0.0]
+            moving = [r for r in rows if r['speed_ms'] > 0.28]
+            speeds_ms = [r['speed_ms'] for r in moving] if moving else [0.0]
             depths = [r['depth_meters'] for r in rows if r['depth_meters'] > 0]
-            vehicle_rows.append({
+            object_rows.append({
                 'track_id': tid,
                 'class_name': rows[0]['class_name'],
-                'first_frame': rows[0]['frame'],
-                'last_frame': rows[-1]['frame'],
-                'total_frames': len(rows),
-                'avg_speed_kmh': round(sum(speeds_kmh) / len(speeds_kmh), 2),
-                'max_speed_kmh': round(max(speeds_kmh), 2),
-                'min_speed_kmh': round(min(speeds_kmh), 2),
+                'first_time_s': round((rows[0]['frame'] - 1) / fps, 2),
+                'last_time_s': round((rows[-1]['frame'] - 1) / fps, 2),
+                'duration_s': round((rows[-1]['frame'] - rows[0]['frame'] + 1) / fps, 2),
+                'avg_speed_ms': round(sum(speeds_ms) / len(speeds_ms), 3),
+                'max_speed_ms': round(max(speeds_ms), 3),
+                'min_speed_ms': round(min(speeds_ms), 3),
                 'avg_depth_m': round(sum(depths) / len(depths), 2) if depths else 0.0,
-                'status': 'moving' if max(speeds_kmh) > 5.0 else 'slow/stationary',
+                'status': 'moving' if max(speeds_ms) > 0.56 else 'slow/stationary',
+                'first_crop_path': first_crop_paths.get(tid, ''),
             })
 
-        vehicles_csv_path = base_csv + '_vehicles.csv'
-        with open(vehicles_csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=vehicle_rows[0].keys())
+        objects_csv_path = base_csv + '_objects.csv'
+        with open(objects_csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=object_rows[0].keys())
             writer.writeheader()
-            writer.writerows(vehicle_rows)
-        print(f"[CSV] Per-vehicle: {vehicles_csv_path} ({len(vehicle_rows)} vehicles)")
+            writer.writerows(object_rows)
+        print(f"[CSV] Per-object: {objects_csv_path} ({len(object_rows)} objects)")
     
     print(f"\n{'=' * 60}")
     print(f"✅ Phase 3 Metric3D Processing Complete!")
@@ -425,7 +472,7 @@ if __name__ == "__main__":
     parser.add_argument('--conf', type=float, default=0.25)
     parser.add_argument('--no-show', action='store_true')
     parser.add_argument('--no-depth', action='store_true')
-    parser.add_argument('--depth-freq', type=int, default=10,
+    parser.add_argument('--depth-freq', type=int, default=5,
                        help='Depth estimation frequency (every N frames)')
     parser.add_argument('--model-size', type=str, default='small',
                        choices=['small', 'large', 'giant2'],

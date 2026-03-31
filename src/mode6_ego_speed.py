@@ -15,6 +15,7 @@ import csv
 import numpy as np
 from pathlib import Path
 from collections import deque
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import src.model_config as model_config
@@ -72,29 +73,28 @@ class EgoSpeedEstimator:
         chosen = valid_idx[np.random.choice(len(valid_idx), n, replace=False)]
         rows, cols = chosen[:, 0], chosen[:, 1]
 
-        dx = road_flow[rows, cols, 0]
-        dy = road_flow[rows, cols, 1]
+        dy = road_flow[rows, cols, 1]   # 竖直分量：前进>0，倒车<0；转弯不影响 dy
         z  = road_depth[rows, cols]
 
         self.last_road_avg_depth = float(np.mean(z))
 
-        delta_x = dx * z / self.fx
-        delta_y = dy * z / self.fy
-        speeds = np.sqrt(delta_x**2 + delta_y**2) * self.fps
+        # 仅用前向分量（dy）；忽略 dx 避免转弯时横向光流虚增速度
+        forward_speeds = (dy * z / self.fy) * self.fps  # 有符号：前进正，倒车负
 
-        valid_s = speeds < 55.6  # < 200 km/h upper cap
+        valid_s = np.abs(forward_speeds) < 55.6  # abs < 200 km/h
         if valid_s.sum() < 5:
             self.frame_count += 1
             return self.current_speed_ms
 
-        raw_speed = float(np.median(speeds[valid_s]))
+        raw_speed = float(np.median(forward_speeds[valid_s]))
 
         # Two-phase EMA: fast warmup → slow steady
         alpha = self.warmup_alpha if self.frame_count < self.warmup_frames else self.steady_alpha
 
         # Outlier clamp (only after warmup to avoid suppressing initial climb)
-        if self.frame_count >= self.warmup_frames and self.current_speed_ms > 0.1:
-            raw_speed = min(raw_speed, self.current_speed_ms * 3.0)
+        if self.frame_count >= self.warmup_frames and abs(self.current_speed_ms) > 0.1:
+            cap_val = abs(self.current_speed_ms) * 3.0
+            raw_speed = max(-cap_val, min(raw_speed, cap_val))
 
         self.current_speed_ms = alpha * raw_speed + (1.0 - alpha) * self.current_speed_ms
         self.speed_history.append(self.current_speed_ms)
@@ -118,16 +118,17 @@ class EgoSpeedEstimator:
 def _draw_panel(frame, speed_ms, speed_history, frame_idx, road_y):
     H, W = frame.shape[:2]
     speed_kmh = speed_ms * 3.6
+    abs_kmh   = abs(speed_kmh)
 
     overlay = frame.copy()
     cv2.rectangle(overlay, (10, 10), (330, 130), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
     cv2.putText(frame, "EGO VEHICLE SPEED", (20, 38),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
-    color = (0, 255, 80) if speed_kmh < 60 else (0, 165, 255) if speed_kmh < 100 else (0, 60, 255)
-    cv2.putText(frame, f"{speed_kmh:6.1f} km/h", (20, 95),
+    color = (0, 255, 80) if abs_kmh < 60 else (0, 165, 255) if abs_kmh < 100 else (0, 60, 255)
+    cv2.putText(frame, f"{speed_kmh:+6.1f} km/h", (20, 95),
                 cv2.FONT_HERSHEY_DUPLEX, 1.6, color, 2)
-    cv2.putText(frame, f"{speed_ms:.2f} m/s", (20, 122),
+    cv2.putText(frame, f"{speed_ms:+.2f} m/s", (20, 122),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1)
 
     if len(speed_history) > 2:
@@ -136,11 +137,11 @@ def _draw_panel(frame, speed_ms, speed_history, frame_idx, road_y):
         cv2.rectangle(overlay2, (gx, gy), (gx + gw, gy + gh), (0, 0, 0), -1)
         cv2.addWeighted(overlay2, 0.55, frame, 0.45, 0, frame)
         history = list(speed_history)
-        max_v = max(max(s * 3.6 for s in history), 10.0)
+        max_v = max(max(abs(s) * 3.6 for s in history), 10.0)
         pts = []
         for i, s in enumerate(history):
             px = gx + int(i / max(len(history) - 1, 1) * gw)
-            py = gy + gh - int(s * 3.6 / max_v * gh)
+            py = gy + gh - int(abs(s) * 3.6 / max_v * gh)
             pts.append((px, py))
         for i in range(1, len(pts)):
             cv2.line(frame, pts[i-1], pts[i], (0, 220, 120), 1)
@@ -156,7 +157,7 @@ def _draw_panel(frame, speed_ms, speed_history, frame_idx, road_y):
 
 
 def process_video_ego_speed(input_path, output_path, show_video=True,
-                             fov_degrees=70.0, depth_frequency=10,
+                             fov_degrees=70.0, depth_frequency=5,
                              road_region_ratio=0.4, model_size='small'):
     """
     Mode 6 主函数：自车速度估计
@@ -179,7 +180,10 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
         print(f"[ERROR] Cannot open: {input_path}")
         return False
 
-    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    fps    = float(cap.get(cv2.CAP_PROP_FPS))
+    if fps <= 0:
+        print("\u26a0\ufe0f  FPS not detected from container, defaulting to 30.0")
+        fps = 30.0
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -204,6 +208,11 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
     speed_est = EgoSpeedEstimator(fx=fx, fy=fy, fps=fps,
                                    road_region_ratio=road_region_ratio)
     road_y = int(height * (1.0 - road_region_ratio))
+
+    run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    if output_path:
+        _op = Path(output_path)
+        output_path = str(_op.with_name(_op.stem + '_' + run_ts + _op.suffix))
 
     writer = None
     if output_path:
@@ -253,8 +262,11 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
             prev_frame = frame.copy()
             frame_idx += 1
 
-            if frame_idx % 50 == 0:
-                print(f"  [{frame_idx}/{total}]  {speed_ms * 3.6:.1f} km/h")
+            if frame_idx > 0 and frame_idx % 50 == 0:
+                if total > 0:
+                    print(f"  [{frame_idx}/{total}]  {speed_ms * 3.6:.1f} km/h")
+                else:
+                    print(f"  [{frame_idx} frames]  {speed_ms * 3.6:.1f} km/h")
 
     finally:
         cap.release()
@@ -266,36 +278,52 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
     if output_path and csv_rows:
         base_csv = str(Path(output_path).with_suffix(''))
 
-        # ── CSV 1: 逐帧数据 ──────────────────────────────────
-        frames_csv_path = base_csv + '_frames.csv'
-        with open(frames_csv_path, 'w', newline='', encoding='utf-8') as f:
-            csv_writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            csv_writer.writeheader()
-            csv_writer.writerows(csv_rows)
-        print(f"[CSV] Per-frame: {frames_csv_path} ({len(csv_rows)} rows)")
-
-        # ── CSV 2: 按秒汇总 ──────────────────────────────────
-        fps_int = max(1, int(round(fps)))
+        # ── CSV: 按秒汇总（m/s单位，含累计位移 + 汇总行）────────
+        fps_safe  = fps if fps > 0 else 30.0
+        fps_int   = max(1, int(round(fps_safe)))
         stats_rows = []
+        cumulative_disp = 0.0
+
         for sec_start in range(0, len(csv_rows), fps_int):
-            sec_rows = csv_rows[sec_start:sec_start + fps_int]
-            moving = [r['speed_kmh'] for r in sec_rows if r['speed_kmh'] > 0.5]
-            speeds = moving if moving else [0.0]
+            sec_rows   = csv_rows[sec_start:sec_start + fps_int]
+            sec_speeds = [r['speed_ms'] for r in sec_rows]
+            duration_s = len(sec_rows) / fps_safe
+            avg_spd    = sum(sec_speeds) / len(sec_speeds)
+            disp       = avg_spd * duration_s
+            cumulative_disp += disp
             stats_rows.append({
-                'second': sec_start // fps_int,
-                'start_frame': sec_rows[0]['frame'],
-                'end_frame': sec_rows[-1]['frame'],
-                'avg_speed_kmh': round(sum(speeds) / len(speeds), 2),
-                'max_speed_kmh': round(max(speeds), 2),
-                'min_speed_kmh': round(min(speeds), 2),
+                'second':                    sec_start // fps_int,
+                'start_frame':               sec_rows[0]['frame'],
+                'end_frame':                 sec_rows[-1]['frame'],
+                'avg_speed_ms':              round(avg_spd, 3),
+                'max_speed_ms':              round(max(sec_speeds), 3),
+                'min_speed_ms':              round(min(sec_speeds), 3),
+                'displacement_m':            round(disp, 2),
+                'cumulative_displacement_m': round(cumulative_disp, 2),
             })
+
+        # 汇总行
+        total_duration_s = len(csv_rows) / fps_safe
+        all_speeds = [r['speed_ms'] for r in csv_rows]
+        overall_avg = cumulative_disp / total_duration_s if total_duration_s > 0 else 0.0
+        stats_rows.append({
+            'second':                    'SUMMARY',
+            'start_frame':               csv_rows[0]['frame'],
+            'end_frame':                 csv_rows[-1]['frame'],
+            'avg_speed_ms':              round(overall_avg, 3),
+            'max_speed_ms':              round(max(all_speeds), 3),
+            'min_speed_ms':              round(min(all_speeds), 3),
+            'displacement_m':            round(cumulative_disp, 2),
+            'cumulative_displacement_m': round(cumulative_disp, 2),
+        })
 
         stats_csv_path = base_csv + '_stats.csv'
         with open(stats_csv_path, 'w', newline='', encoding='utf-8') as f:
             csv_writer = csv.DictWriter(f, fieldnames=stats_rows[0].keys())
             csv_writer.writeheader()
             csv_writer.writerows(stats_rows)
-        print(f"[CSV] Per-second stats: {stats_csv_path} ({len(stats_rows)} seconds)")
+        n_secs = len(stats_rows) - 1
+        print(f"[CSV] Stats: {stats_csv_path}  ({n_secs}s + summary  |  total disp {cumulative_disp:.1f} m)")
 
     print(f"\n[OK] Done. {frame_idx} frames processed")
     return True

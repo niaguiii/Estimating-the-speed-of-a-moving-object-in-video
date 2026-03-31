@@ -20,7 +20,7 @@
 4. Mode 4: Depth Anything V2 (mode4_depth_anything_v2.py)
    - YOLOv8 + RAFT + Depth Anything V2 (相对深度，±10-15%)
    
-5. Mode 5: Metric3D v2 (mode5_metric3d_v2.py) 🔥
+5. Mode 5: Metric3D v2 (mode5_metric3d_v2.py) 
    - YOLOv8 + RAFT + Metric3D v2 (绝对深度，±2-5%，最新最好！)
 
 6. Mode 6: 自车测速 (mode6_ego_speed.py)
@@ -29,6 +29,7 @@
 import os
 import sys
 import glob
+import math
 
 def get_input_videos():
     """获取input文件夹中的所有视频文件"""
@@ -227,7 +228,7 @@ def select_model_version():
     print("     - Depth-aware speed estimation")
     print("     - Good accuracy (±10-15%)")
     print("")
-    print("  5. RAFT + Metric3D v2 [BEST - Absolute Depth!] 🔥🔥🔥")
+    print("  5. RAFT + Metric3D v2 [BEST - Absolute Depth!] ")
     print("     - All features from mode 4")
     print("     - Metric3D v2 for ABSOLUTE depth (meters)")
     print("     - No manual calibration needed")
@@ -334,6 +335,34 @@ def main():
         # 根据版本导入对应模块
         if model_version == 'metric3d':
             # Mode 5: Metric3D v2 (绝对深度)
+            # 询问相机焦段 → 自动换算水平视角
+            print("\n[Mode 5] 请输入相机等效全画幅焦段（mm）")
+            print("  常见焦段参考: 14mm(超广) 24mm(广角) 35mm(标准广) 50mm(标准) 85mm(人像) 135mm(中长)")
+            print("  手机广角端通常约等效 24-28mm，固定监控约 35-50mm")
+            _focal_input = input("  焦段 (默认 50): ").strip()
+            try:
+                _focal_mm = float(_focal_input) if _focal_input else 50.0
+                if _focal_mm <= 0:
+                    raise ValueError
+            except ValueError:
+                print("  [警告] 输入无效，使用默认值 50mm")
+                _focal_mm = 50.0
+            # 全画幅传感器宽度 36mm → 水平 FOV
+            fov_degrees = 2.0 * math.degrees(math.atan(18.0 / _focal_mm))
+            print(f"  ✅ {_focal_mm:.0f}mm  →  水平FOV ≈ {fov_degrees:.1f}°")
+
+            print("\n[Mode 5] 深度更新频率（每N帧重算一次深度，越小越精确但越慢）")
+            print("  推荐: GPU可用→3~5, 仅CPU→10, 极快速物体→3")
+            _depth_input = input("  深度频率 (默认 5): ").strip()
+            try:
+                depth_freq = int(_depth_input) if _depth_input else 5
+                if depth_freq <= 0:
+                    raise ValueError
+            except ValueError:
+                print("  [警告] 输入无效，使用默认值 5")
+                depth_freq = 5
+            print(f"  ✅ 每 {depth_freq} 帧更新一次深度")
+
             from src.mode5_metric3d_v2 import process_video_metric3d
             success = process_video_metric3d(
                 input_path=selected_video,
@@ -341,8 +370,9 @@ def main():
                 show_video=show_window,
                 conf_threshold=0.25,
                 show_depth=True,
-                depth_frequency=10,
-                model_size='small'  # 可选：'small', 'large', 'giant2'
+                depth_frequency=depth_freq,
+                model_size='small',  # 可选：'small', 'large', 'giant2'
+                fov_degrees=fov_degrees
             )
         elif model_version == 'phase3':
             # Mode 4: Depth Anything V2 (相对深度)
@@ -376,12 +406,27 @@ def main():
             )
         elif model_version == 'ego':
             # Mode 6: Ego-Vehicle Speed (no YOLO)
+            # 询问相机焦段 → 自动换算水平视角
+            print("\n[Mode 6] 请输入相机等效全画幅焦段（mm）")
+            print("  常见焦段参考: 14mm(超广) 24mm(广角) 35mm(标准广) 50mm(标准) 85mm(人像) 135mm(中长)")
+            print("  行车记录仪通常约等效 14-24mm，手机广角端约 24-28mm")
+            _focal_input = input("  焦段 (默认 24): ").strip()
+            try:
+                _focal_mm = float(_focal_input) if _focal_input else 24.0
+                if _focal_mm <= 0:
+                    raise ValueError
+            except ValueError:
+                print("  [警告] 输入无效，使用默认值 24mm")
+                _focal_mm = 24.0
+            fov_degrees = 2.0 * math.degrees(math.atan(18.0 / _focal_mm))
+            print(f"  ✅ {_focal_mm:.0f}mm  →  水平FOV ≈ {fov_degrees:.1f}°")
+
             from src.mode6_ego_speed import process_video_ego_speed
             success = process_video_ego_speed(
                 input_path=selected_video,
                 output_path=output_path,
                 show_video=show_window,
-                fov_degrees=70.0,
+                fov_degrees=fov_degrees,
                 depth_frequency=10,
                 road_region_ratio=0.4,
                 model_size='small'

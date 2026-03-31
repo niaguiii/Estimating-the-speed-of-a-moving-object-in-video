@@ -13,11 +13,14 @@ export const uploadVideo = (file, onUploadProgress) => {
   })
 }
 
-export const processVideo = (videoId, mode) => {
-  return axios.post(`${apiBase}/api/process`, {
+export const processVideo = (videoId, mode, focalMm = null, depthFrequency = null) => {
+  const body = {
     video_id: videoId,
     mode: mode
-  })
+  }
+  if (focalMm !== null) body.focal_mm = focalMm
+  if (depthFrequency !== null) body.depth_frequency = depthFrequency
+  return axios.post(`${apiBase}/api/process`, body)
 }
 
 export const getTaskStatus = (taskId) => {

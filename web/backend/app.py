@@ -60,8 +60,10 @@ task_threads = {}
 # 数据模型
 class ProcessRequest(BaseModel):
     video_id: str
-    mode: int  # 1-4
+    mode: int  # 1-6
     show_visualization: bool = True
+    focal_mm: Optional[float] = None      # Mode 5/6: 等效焦段(mm)，默认50(Mode5)/24(Mode6)
+    depth_frequency: Optional[int] = None  # Mode 5: 深度更新频率，默认5
 
 
 class TaskStatus(BaseModel):
@@ -160,9 +162,16 @@ async def start_process(request: ProcessRequest):
         python_path = sys.executable
         script_path = Path(__file__).parent / "process_worker.py"
         
+        # 收集可选参数
+        extra_args = []
+        if request.focal_mm is not None:
+            extra_args.extend(['--focal-mm', str(request.focal_mm)])
+        if request.depth_frequency is not None:
+            extra_args.extend(['--depth-freq', str(request.depth_frequency)])
+
         # 启动子进程（捕获stdout实时输出）
         process = subprocess.Popen(
-            [python_path, str(script_path), task_id, str(input_path), str(mode), str(OUTPUT_DIR)],
+            [python_path, str(script_path), task_id, str(input_path), str(mode), str(OUTPUT_DIR)] + extra_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # 合并stderr到stdout
             text=True,
