@@ -33,6 +33,18 @@ export const getDownloadUrl = (taskId) => {
   return `${apiBase}/api/download/${taskId}`
 }
 
+export const getCsvFiles = (taskId) => {
+  return axios.get(`${apiBase}/api/task/${taskId}`).then(res => ({
+    csvFiles:  res.data.csv_files  || [],
+    cropFiles: res.data.crop_files || [],
+    zipUrl:    res.data.zip_url    || null,
+  }))
+}
+
+export const getDataZipUrl = (taskId) => {
+  return `${apiBase}/api/download-zip/${taskId}`
+}
+
 export const getHistory = () => {
   return axios.get(`${apiBase}/api/history`)
 }

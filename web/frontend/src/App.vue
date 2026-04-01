@@ -28,6 +28,7 @@
     <ResultDisplay
       v-if="currentStep === 'result'"
       :task-id="taskId"
+      :mode="selectedMode"
       @reset="reset"
     />
   </div>

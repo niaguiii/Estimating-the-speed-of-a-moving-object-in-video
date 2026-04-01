@@ -409,7 +409,7 @@ def main():
             # 询问相机焦段 → 自动换算水平视角
             print("\n[Mode 6] 请输入相机等效全画幅焦段（mm）")
             print("  常见焦段参考: 14mm(超广) 24mm(广角) 35mm(标准广) 50mm(标准) 85mm(人像) 135mm(中长)")
-            print("  行车记录仪通常约等效 14-24mm，手机广角端约 24-28mm")
+            print("  行车记录仪/手持行走通常约等效 14-24mm，手机广角端约 24-28mm")
             _focal_input = input("  焦段 (默认 24): ").strip()
             try:
                 _focal_mm = float(_focal_input) if _focal_input else 24.0

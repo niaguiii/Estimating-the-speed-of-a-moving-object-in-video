@@ -10,13 +10,15 @@ import uuid
 import shutil
 import threading
 import subprocess
+import zipfile
+import io
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -218,8 +220,65 @@ async def get_task_status(task_id: str):
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    return tasks[task_id]
+
+    task = tasks[task_id]
+
+    # 处理完成时，扫描输出目录下的 CSV 文件和 crops 截图目录
+    csv_files = []
+    crop_files = []
+    if task["status"] == "completed" and OUTPUT_DIR.exists():
+        for f in OUTPUT_DIR.glob(f"{task_id}_output*.csv"):
+            csv_files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "url": f"/api/files/{task_id}/{f.name}"
+            })
+        # 扫描截图目录
+        crops_dir = OUTPUT_DIR / f"{task_id}_output_crops"
+        if crops_dir.exists():
+            for f in sorted(crops_dir.iterdir()):
+                if f.suffix.lower() in ('.jpg', '.jpeg', '.png'):
+                    crop_files.append({
+                        "name": f.name,
+                        "size": f.stat().st_size,
+                        "url": f"/api/files/{task_id}/{task_id}_output_crops/{f.name}"
+                    })
+
+    return {
+        **task,
+        "csv_files": csv_files,
+        "crop_files": crop_files,
+        "zip_url": f"/api/download-zip/{task_id}",
+    }
+
+
+@app.get("/api/files/{task_id}/{filepath:.+}")
+async def download_file(task_id: str, filepath: str):
+    """
+    下载指定任务相关的任意文件（CSV 或截图）
+    支持:
+      /api/files/{id}/xxx.csv
+      /api/files/{id}/xxx_crops/xxx.jpg
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # filepath 可能是 "xxx.csv" 或 "xxx_crops/xxx.jpg"
+    file_path = OUTPUT_DIR / filepath
+    if not file_path.exists() or not str(file_path).startswith(str(OUTPUT_DIR)):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    filename = file_path.name
+    media_type_map = {
+        '.csv':  'text/csv',
+        '.jpg':  'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png':  'image/png',
+        '.mp4':  'video/mp4',
+    }
+    media_type = next((v for ext, v in media_type_map.items() if filename.lower().endswith(ext)), 'application/octet-stream')
+
+    return FileResponse(file_path, media_type=media_type, filename=filename)
 
 
 @app.get("/api/download/{task_id}")
@@ -229,19 +288,69 @@ async def download_result(task_id: str):
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     task = tasks[task_id]
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="视频还未处理完成")
-    
+
     output_path = task["output_path"]
     if not output_path or not Path(output_path).exists():
         raise HTTPException(status_code=404, detail="输出文件不存在")
-    
+
     return FileResponse(
         output_path,
         media_type="video/mp4",
         filename=f"result_{task_id}.mp4"
+    )
+
+
+@app.get("/api/download-zip/{task_id}")
+async def download_data_zip(task_id: str):
+    """
+    下载任务的所有数据（CSV + crops 截图），打包为 ZIP
+    所有 Mode 统一接口：Mode 5 包含 2个CSV + crops；其他 Mode 各 1个CSV
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task = tasks[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="视频还未处理完成")
+
+    if not OUTPUT_DIR.exists():
+        raise HTTPException(status_code=404, detail="输出目录不存在")
+
+    # 收集所有文件
+    files_to_zip = []
+
+    # 1. CSV 文件
+    for csv_file in OUTPUT_DIR.glob(f"{task_id}_output*.csv"):
+        files_to_zip.append((csv_file, csv_file.name))
+
+    # 2. crops 截图目录（仅 Mode 5 有）
+    crops_dir = OUTPUT_DIR / f"{task_id}_output_crops"
+    if crops_dir.exists():
+        for crop_file in sorted(crops_dir.iterdir()):
+            if crop_file.suffix.lower() in ('.jpg', '.jpeg', '.png'):
+                rel_path = f"crops/{crop_file.name}"
+                files_to_zip.append((crop_file, rel_path))
+
+    if not files_to_zip:
+        raise HTTPException(status_code=404, detail="没有找到可下载的数据文件")
+
+    # 写入内存 ZIP 流
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for file_path, arc_name in files_to_zip:
+            zf.write(file_path, arc_name)
+
+    zip_buffer.seek(0)
+    zip_name = f"data_{task_id}.zip"
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{zip_name}"}
     )
 
 

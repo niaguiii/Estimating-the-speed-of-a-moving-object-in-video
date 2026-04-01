@@ -49,7 +49,7 @@
         @click="selectMode(5)"
       >
         <h3>模式 5: Metric3D v2 🔥</h3>
-        <p>绝对度量深度（真实米数）</p>
+        <p>测量物体真实移动速度（排除摄像头运动干扰）</p>
         <span class="badge hot">最高精度</span>
       </div>
 
@@ -58,9 +58,9 @@
         :class="{ selected: selectedMode === 6 }"
         @click="selectMode(6)"
       >
-        <h3>模式 6: 自车测速 🚗</h3>
-        <p>无需YOLO，路面光流测本车速度</p>
-        <span class="badge recommended">行车记录仪</span>
+        <h3>模式 6: 自车测速</h3>
+        <p>测量摄像头/设备自身的移动速度</p>
+        <span class="badge recommended">手持/行车记录仪</span>
       </div>
     </div>
 
@@ -69,7 +69,7 @@
       <label class="focal-label">
         📷 等效全画幅焦段（mm）：
         <span class="focal-hint">
-          {{ selectedMode === 5 ? '普通镜头约50mm，行车记录仪约14-24mm' : '行车记录仪约14-24mm，手机广角约24mm' }}
+          {{ selectedMode === 5 ? '普通镜头约50mm，监控/行车记录仪约14-24mm' : '广角行走/手持约24mm，标准约35-50mm，望远约85mm' }}
         </span>
       </label>
       <div class="focal-inputs">
@@ -98,18 +98,25 @@
 
       <div v-if="selectedMode === 5" class="depth-input-section">
         <label class="focal-label">
-          📊 深度更新频率：
-          <span class="focal-hint">每N帧重算一次深度，越小越精确但越慢（推荐3-5）</span>
+          🎯 处理精度：
+          <span class="focal-hint">决定深度计算的频率，影响速度与精度</span>
         </label>
-        <div class="depth-inputs">
-          <input
-            v-model.number="depthFrequency"
-            type="number"
-            class="focal-number-input"
-            min="1"
-            max="30"
-          />
-          <span class="focal-unit">帧</span>
+        <div class="precision-options">
+          <label
+            v-for="opt in precisionOptions"
+            :key="opt.value"
+            class="precision-option"
+            :class="{ active: precisionLevel === opt.value }"
+          >
+            <input
+              type="radio"
+              :value="opt.value"
+              v-model="precisionLevel"
+              class="precision-radio"
+            />
+            <span class="precision-name">{{ opt.label }}</span>
+            <span class="precision-desc">{{ opt.desc }}</span>
+          </label>
         </div>
       </div>
     </div>
@@ -138,9 +145,30 @@ const props = defineProps(['videoId'])
 
 const selectedMode = ref(null)
 const focalMm = ref(50)
-const depthFrequency = ref(5)
+const precisionLevel = ref('balanced')
 const processing = ref(false)
 const errorMessage = ref('')
+
+const precisionOptions = [
+  {
+    value: 'high',
+    label: '高精度（慢）',
+    desc: '每帧重新计算深度，最准确，适合短视频',
+    depthFrequency: 1,
+  },
+  {
+    value: 'balanced',
+    label: '平衡（推荐）',
+    desc: '每5帧计算一次，速度和精度兼顾',
+    depthFrequency: 5,
+  },
+  {
+    value: 'fast',
+    label: '快速（快）',
+    desc: '每20帧计算一次，适合长视频预览',
+    depthFrequency: 20,
+  },
+]
 
 const focalPresets = [
   { label: '14mm', value: 14 },
@@ -182,7 +210,8 @@ const startProcessing = async () => {
 
   try {
     const focalMmArg = (selectedMode.value === 5 || selectedMode.value === 6) ? focalMm.value : null
-    const depthFreqArg = selectedMode.value === 5 ? depthFrequency.value : null
+    const selectedPreset = precisionOptions.find(o => o.value === precisionLevel.value)
+    const depthFreqArg = selectedPreset ? selectedPreset.depthFrequency : 5
 
     const response = await processVideo(props.videoId, selectedMode.value, focalMmArg, depthFreqArg)
 
@@ -331,6 +360,52 @@ const startProcessing = async () => {
 
 .depth-input-section {
     margin-top: 12px;
+}
+
+.precision-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.precision-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: white;
+}
+
+.precision-option:hover {
+    border-color: #007bff;
+    background: #f0f7ff;
+}
+
+.precision-option.active {
+    border-color: #007bff;
+    background: #e7f3ff;
+}
+
+.precision-radio {
+    accent-color: #007bff;
+    width: 16px;
+    height: 16px;
+}
+
+.precision-name {
+    font-weight: bold;
+    font-size: 14px;
+    color: #333;
+    min-width: 120px;
+}
+
+.precision-desc {
+    font-size: 12px;
+    color: #666;
 }
 
 .alert {
