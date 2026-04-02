@@ -7,8 +7,16 @@
 **适用场景：**
 - ✅ 本地电脑（集显/无独显）
 - ✅ 代码开发和调试
-- ✅ 测试单帧处理
-- ⚠️ 不适合处理完整视频（速度慢）
+- ✅ 测试单帧处理（Mode 1-4）
+- ⚠️ Mode 5/6 需要 GPU（请使用 GPU 版本）
+
+---
+
+**重要提醒：Mode 5 和 Mode 6 需要 GPU 才能运行！**
+- Mode 5（Metric3D v2 绝对深度测速）
+- Mode 6（自车速度估算）
+
+如需使用 Mode 5/6，请参考 `../gpu/README.md` 安装 GPU 环境。
 
 ---
 
@@ -79,7 +87,7 @@ python setup_and_test.py
 cd ..
 
 # 运行验证脚本
-python test_dependencies.py
+python ../test_project.py --mode deps
 ```
 
 **期望输出：**
@@ -146,7 +154,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 安装完成后：
 
-1. **验证环境**: `cd .. && python test_dependencies.py`
+1. **验证环境**: `python ../test_project.py --mode deps`
 2. **开始开发**: 编写Phase 3核心模块
 3. **测试功能**: 测试单帧处理
 4. **准备租GPU**: 需要处理完整视频时
@@ -156,8 +164,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ## 📚 相关文档
 
 - **../gpu/README.md** - GPU环境安装
-- **../../INSTALLATION_GUIDE.md** - 完整安装指南
-- **../../README.md** - 项目主文档
+- **../README.md** - 项目主文档
 
 ---
 

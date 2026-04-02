@@ -71,15 +71,19 @@ echo "✅ PyTorch GPU version installed"
 
 echo ""
 echo "================================================================"
-echo "[4/5] Installing Depth Anything V2 dependencies..."
+echo "[4/5] Installing Depth Anything V2 + Metric3D v2 dependencies..."
 echo "================================================================"
-pip3 install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0 || \
-pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0
+pip3 install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0 mmengine>=0.7.0 mmcv>=2.0.0 scipy>=1.7.0 einops>=0.6.0 || \
+pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0 mmengine>=0.7.0 mmcv>=2.0.0 scipy>=1.7.0 einops>=0.6.0
 if [ $? -ne 0 ]; then
-    echo "❌ Depth dependencies installation failed"
-    exit 1
+    echo "⚠️  mmengine/mmcv installation failed, trying separately..."
+    pip3 install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0 || \
+    pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0
+    pip3 install scipy>=1.7.0 einops>=0.6.0 || pip install scipy>=1.7.0 einops>=0.6.0
+    pip3 install mmengine>=0.7.0 || pip install mmengine>=0.7.0
+    pip3 install mmcv>=2.0.0 || pip install mmcv>=2.0.0
 fi
-echo "✅ Depth Anything dependencies installed"
+echo "✅ Depth Anything V2 + Metric3D v2 dependencies installed"
 
 echo ""
 echo "================================================================"
@@ -116,8 +120,9 @@ echo "📋 Installed components:"
 echo "  ✅ PyTorch 2.x + CUDA 11.8"
 echo "  ✅ Torchvision (RAFT optical flow)"
 echo "  ✅ Depth Anything V2"
+echo "  ✅ Metric3D v2 (mmengine + mmcv + scipy + einops)"
 echo "  ✅ YOLOv8 + ByteTrack"
-echo "  ✅ All Phase 1/2/3 dependencies"
+echo "  ✅ All Phase 1/2/3/4/5 dependencies"
 echo ""
 echo "🚀 Next steps:"
 echo "  1. Confirm GPU is available (should see CUDA: True above)"

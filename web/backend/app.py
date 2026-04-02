@@ -8,6 +8,7 @@ import os
 import sys
 import uuid
 import shutil
+import asyncio
 import threading
 import subprocess
 import zipfile
@@ -66,6 +67,18 @@ class ProcessRequest(BaseModel):
     show_visualization: bool = True
     focal_mm: Optional[float] = None      # Mode 5/6: 等效焦段(mm)，默认50(Mode5)/24(Mode6)
     depth_frequency: Optional[int] = None  # Mode 5: 深度更新频率，默认5
+    apply_enhancement: bool = False       # 是否启用预处理增强
+    enhancement_options: Optional[list] = None  # ["blur", "haze", "brightness"]
+
+
+class DetectQualityRequest(BaseModel):
+    video_id: str
+    quick: bool = False  # 快速检测（少量采样）
+
+
+class EnhanceRequest(BaseModel):
+    video_id: str
+    enhancement_options: list  # ["blur", "haze", "brightness"]
 
 
 class TaskStatus(BaseModel):
@@ -128,24 +141,61 @@ async def upload_video(file: UploadFile = File(...)):
 async def start_process(request: ProcessRequest):
     """
     开始处理视频（异步）
+
+    如果 apply_enhancement=True，则先将视频预处理增强，
+    再将增强后的视频送入主 pipeline。
     """
     try:
         video_id = request.video_id
         mode = request.mode
-        
+
         # 查找上传的视频
         video_files = list(UPLOAD_DIR.glob(f"{video_id}.*"))
         if not video_files:
             raise HTTPException(status_code=404, detail="视频文件不存在")
-        
+
         input_path = video_files[0]
-        
-        # 获取视频总帧数
+        processed_input_path = str(input_path)
+        base_ext = video_files[0].suffix
+        applied_enhancement = None
+
+        # === 预处理增强阶段 ===
+        if request.apply_enhancement and request.enhancement_options:
+            enhancement_options = request.enhancement_options
+            try:
+                from quality_detector import detect_video_quality
+                from enhance_video import enhance_video
+            except ImportError as e:
+                raise HTTPException(status_code=500, detail=f"增强模块加载失败: {str(e)}")
+            enhanced_path = UPLOAD_DIR / f"{video_id}_enhanced{base_ext}"
+
+            # 自适应检测（用于参数调优，较快，在主线程执行）
+            report = detect_video_quality(str(input_path))
+
+            # 执行增强较慢，放到线程池中避免阻塞 FastAPI 事件循环
+            def _do_enhance():
+                return enhance_video(
+                    input_path=str(input_path),
+                    output_path=str(enhanced_path),
+                    issues=enhancement_options,
+                    quality_report=report,
+                    brightness_level=report.brightness_level
+                )
+
+            success, applied = await asyncio.to_thread(_do_enhance)
+
+            if not success or not enhanced_path.exists():
+                raise HTTPException(status_code=500, detail="视频预处理增强失败")
+
+            processed_input_path = str(enhanced_path)
+            applied_enhancement = applied
+
+        # 获取视频总帧数（用于进度显示）
         import cv2
-        cap = cv2.VideoCapture(str(input_path))
+        cap = cv2.VideoCapture(processed_input_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
-        
+
         # 创建任务
         task_id = str(uuid.uuid4())[:8]
         tasks[task_id] = {
@@ -155,15 +205,17 @@ async def start_process(request: ProcessRequest):
             "message": "正在处理...",
             "video_id": video_id,
             "mode": mode,
-            "input_path": str(input_path),
+            "input_path": processed_input_path,
+            "original_input_path": str(input_path),
             "output_path": None,
+            "applied_enhancement": applied_enhancement,
             "created_at": datetime.now().isoformat()
         }
-        
+
         # 使用subprocess启动独立进程（可以强制终止）
         python_path = sys.executable
         script_path = Path(__file__).parent / "process_worker.py"
-        
+
         # 收集可选参数
         extra_args = []
         if request.focal_mm is not None:
@@ -173,7 +225,7 @@ async def start_process(request: ProcessRequest):
 
         # 启动子进程（捕获stdout实时输出）
         process = subprocess.Popen(
-            [python_path, str(script_path), task_id, str(input_path), str(mode), str(OUTPUT_DIR)] + extra_args,
+            [python_path, str(script_path), task_id, processed_input_path, str(mode), str(OUTPUT_DIR)] + extra_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # 合并stderr到stdout
             text=True,
@@ -206,9 +258,10 @@ async def start_process(request: ProcessRequest):
         return {
             "success": True,
             "task_id": task_id,
-            "message": "处理任务已启动"
+            "message": "处理任务已启动",
+            "applied_enhancement": applied_enhancement
         }
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"启动处理失败: {str(e)}")
 
@@ -281,6 +334,52 @@ async def download_file(task_id: str, filepath: str):
     return FileResponse(file_path, media_type=media_type, filename=filename)
 
 
+@app.get("/api/download-enhanced/{video_id}")
+async def download_enhanced_video(video_id: str):
+    """
+    下载预处理增强后的视频
+    """
+    # 查找增强视频（原始id + _enhanced 后缀）
+    video_files = list(UPLOAD_DIR.glob(f"{video_id}_enhanced.*"))
+    if not video_files:
+        raise HTTPException(status_code=404, detail="增强视频不存在，请先执行预处理")
+
+    enhanced_path = video_files[0]
+    if not enhanced_path.exists():
+        raise HTTPException(status_code=404, detail="增强视频文件不存在")
+
+    stem = enhanced_path.stem  # e.g. "abc123_enhanced"
+    ext = enhanced_path.suffix  # e.g. ".mp4"
+    filename = f"{stem}{ext}"
+
+    return FileResponse(
+        str(enhanced_path),
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
+@app.get("/api/download-original/{video_id}")
+async def download_original_video(video_id: str):
+    """
+    下载原始上传视频（用于增强前后对比）
+    """
+    video_files = list(UPLOAD_DIR.glob(f"{video_id}.*"))
+    if not video_files:
+        raise HTTPException(status_code=404, detail="原始视频不存在")
+
+    original_path = video_files[0]
+    if not original_path.exists():
+        raise HTTPException(status_code=404, detail="原始视频文件不存在")
+
+    filename = f"{original_path.stem}{original_path.suffix}"
+    return FileResponse(
+        str(original_path),
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
 @app.get("/api/download/{task_id}")
 async def download_result(task_id: str):
     """
@@ -323,11 +422,17 @@ async def download_data_zip(task_id: str):
     # 收集所有文件
     files_to_zip = []
 
-    # 1. CSV 文件
+    # 1. 处理后的视频文件（所有 Mode）
+    task = tasks[task_id]
+    output_video = task.get("output_path")
+    if output_video and Path(output_video).exists():
+        files_to_zip.append((Path(output_video), f"processed_video.mp4"))
+
+    # 2. CSV 文件
     for csv_file in OUTPUT_DIR.glob(f"{task_id}_output*.csv"):
         files_to_zip.append((csv_file, csv_file.name))
 
-    # 2. crops 截图目录（仅 Mode 5 有）
+    # 3. crops 截图目录（仅 Mode 5 有）
     crops_dir = OUTPUT_DIR / f"{task_id}_output_crops"
     if crops_dir.exists():
         for crop_file in sorted(crops_dir.iterdir()):
@@ -373,6 +478,108 @@ async def get_history():
     # 按创建时间倒序
     history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return {"tasks": history}
+
+
+# ==================== 视频质量检测与预处理接口 ====================
+
+@app.post("/api/detect-quality")
+async def detect_quality(request: DetectQualityRequest):
+    """
+    检测视频质量（模糊/雾/亮度）
+    检测完成后返回结构化报告，无需修改原视频。
+    """
+    try:
+        video_id = request.video_id
+
+        # 查找上传的视频
+        video_files = list(UPLOAD_DIR.glob(f"{video_id}.*"))
+        if not video_files:
+            raise HTTPException(status_code=404, detail="视频文件不存在")
+
+        input_path = video_files[0]
+
+        # 导入检测模块（懒加载）
+        try:
+            from quality_detector import detect_video_quality, quick_detect
+        except ImportError:
+            raise HTTPException(status_code=500, detail="质量检测模块加载失败，请检查 src/quality_detector.py")
+
+        # 执行检测
+        if request.quick:
+            report = quick_detect(str(input_path))
+        else:
+            report = detect_video_quality(str(input_path))
+
+        return {
+            "success": True,
+            "report": report.to_dict(),
+            "message": "检测完成"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"检测失败: {str(e)}")
+
+
+@app.post("/api/enhance")
+async def enhance_video_endpoint(request: EnhanceRequest):
+    """
+    预处理视频（去雾/去模糊/提亮）
+    在原视频上执行预处理增强，生成增强版视频。
+    增强后的视频路径将记录到临时存储，供后续 pipeline 使用。
+    注意：视频处理较慢，异步在线程池中执行，不阻塞 FastAPI 事件循环。
+    """
+    try:
+        video_id = request.video_id
+        enhancement_options = request.enhancement_options
+
+        # 查找上传的视频
+        video_files = list(UPLOAD_DIR.glob(f"{video_id}.*"))
+        if not video_files:
+            raise HTTPException(status_code=404, detail="视频文件不存在")
+
+        input_path = video_files[0]
+        base_ext = video_files[0].suffix
+        enhanced_path = UPLOAD_DIR / f"{video_id}_enhanced{base_ext}"
+
+        # 导入增强模块（懒加载）
+        try:
+            from quality_detector import detect_video_quality
+            from enhance_video import enhance_video
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=f"增强模块加载失败: {str(e)}")
+
+        # 自适应检测（较快，20帧采样，在主线程执行）
+        report = detect_video_quality(str(input_path))
+
+        # 视频增强较慢，放到线程池中异步执行，避免阻塞事件循环
+        def _do_enhance():
+            return enhance_video(
+                input_path=str(input_path),
+                output_path=str(enhanced_path),
+                issues=enhancement_options,
+                quality_report=report,
+                brightness_level=report.brightness_level
+            )
+
+        success, applied = await asyncio.to_thread(_do_enhance)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="视频增强处理失败")
+
+        return {
+            "success": True,
+            "enhanced_video_id": f"{video_id}_enhanced",
+            "enhanced_video_path": str(enhanced_path),
+            "applied_methods": applied,
+            "message": f"增强完成：{', '.join(applied)}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"增强失败: {str(e)}")
 
 
 @app.post("/api/cancel/{task_id}")

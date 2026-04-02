@@ -1,284 +1,301 @@
 # 项目结构文档
 
-> 视频中移动物体速度估计 - 文件组织说明  
-> **更新时间:** 2026-01-05 | **Phase 3 已完成 | Phase 4 Web已完成 ✅**
+**[本文档 docs/PROJECT_STRUCTURE.md]** — 详细目录结构、模块关系、配置说明
 
-## 📁 项目目录结构
+**[项目概述 README.md]** — 项目概述、快速开始、功能演示、模式选择指南
+
+**[技术报告 docs/TECHNICAL_REPORT.md]** — 六种模式 + 预处理的算法原理、公式推导、论文出处
+
+**[Web部署 web/README.md]** — 前端/后端部署、API文档、开发指南
+
+> 本文档详细介绍项目的目录结构、核心模块、数据流、以及各模块的技术选型。
+
+---
+
+## 1. 整体目录结构
 
 ```
 Estimating-the-speed-of-a-moving-object-in-video/
 │
-├── 📄 main.py                  # CLI模式主程序入口
-├── 📄 README.md                # 项目说明文档
-├── 📄 .gitignore              # Git忽略配置
-├── 📄 .gitattributes          # Git属性配置
+├── main.py                     # CLI 主程序入口，统一调用全部 6 种模式
 │
-├── 📁 data/                    # 数据目录 ⭐ 统一管理
-│   ├── 📁 cli/                # CLI模式数据
-│   │   ├── input/            # 输入视频存放（测试用）
-│   │   └── output/           # 处理结果输出
-│   └── 📁 web/                # Web模式数据
-│       ├── uploads/          # Web上传文件存储
-│       └── outputs/          # Web处理结果存储
+├── README.md                   # 项目概述、快速开始、功能演示
 │
-├── 📁 src/                     # 核心处理代码
+├── .gitignore                 # Git 忽略规则（模型、日志、缓存等）
+│
+├── src/                       # 核心源代码模块（16 个 .py 文件，扁平结构）
 │   ├── __init__.py
-│   ├── config.py              # 配置文件
-│   ├── model_config.py        # 模型配置统一管理
+│   ├── config.py              # 全局配置（阈值、路径、颜色等）
+│   ├── model_config.py        # 模型下载路径管理（必须在 DL 库之前 import）
 │   │
-│   ├── mode1_detection_tracking.py   # Mode 1: 检测+追踪 (ByteTrack)
-│   ├── mode2_speed_estimation.py     # Mode 2: 速度估算 (物体尺寸)
-│   ├── mode3_raft_optical_flow.py    # Mode 3: RAFT光流测速
-│   ├── mode4_depth_anything_v2.py    # Mode 4: Depth Anything V2 (相对深度)
-│   ├── mode5_metric3d_v2.py          # Mode 5: Metric3D v2 (绝对深度)
+│   ├── mode1_detection_tracking.py    # Mode 1: YOLOv8 检测 + ByteTrack 追踪
+│   ├── mode2_speed_estimation.py      # Mode 2: 固定摄像头速度估算（物体尺寸标定）
+│   ├── mode3_raft_optical_flow.py     # Mode 3: RAFT 光流 + 摄像头运动补偿
+│   ├── mode4_depth_anything_v2.py     # Mode 4: Depth Anything V2 相对深度感知
+│   ├── mode5_metric3d_v2.py           # Mode 5: Metric3D v2 绝对度量深度（推荐）
+│   ├── mode6_ego_speed.py             # Mode 6: 路面光流自车速度估算（无需 YOLO）
 │   │
-│   ├── optical_flow_raft.py          # RAFT光流模块
-│   ├── depth_estimation.py           # Depth Anything V2模块
-│   ├── depth_estimation_metric3d.py  # Metric3D v2模块
+│   ├── optical_flow_raft.py            # RAFT 稠密光流算法封装
+│   ├── depth_estimation.py             # Depth Anything V2 深度估计封装
+│   ├── depth_estimation_metric3d.py     # Metric3D v2 深度估计封装
 │   │
-│   ├── main_opencv.py         # Legacy: OpenCV ONNX实现
-│   └── main_yolov8_native.py  # Legacy: YOLOv8原生实现
+│   ├── enhance_video.py                # 视频预处理增强
+│   │                                    #   - DCP 暗通道去雾
+│   │                                    #   - 维纳反卷积去模糊
+│   │                                    #   - CLAHE + Gamma 亮度增强
+│   │
+│   ├── quality_detector.py              # 视频质量检测
+│   │                                    #   - Laplacian 方差法检测模糊
+│   │                                    #   - DCP 暗通道法检测雾气
+│   │                                    #   - 直方图统计检测亮度
+│   │
+│   ├── main_opencv.py                  # 遗留：OpenCV ONNX 检测（仅供参考）
+│   └── main_yolov8_native.py           # 遗留：YOLOv8 原生检测（仅供参考）
 │
-├── 📁 models/                  # AI模型文件
-│   ├── yolov8n.pt             # YOLOv8权重文件
-│   └── coco.names             # COCO 80类物体标签（如有）
+├── cfg/                         # 配置文件
+│   └── bytetrack_stable.yaml    # ByteTrack 稳定版配置文件
 │
-├── 📁 trackers/                # 追踪器实现
-│   ├── byte_tracker.py        # ByteTrack高精度追踪
-│   └── simple_tracker.py      # 简单追踪器（备用）
+├── scripts/                     # 辅助脚本
+│   ├── README_SCRIPTS.md        # 脚本目录导航
+│   │
+│   ├── check_project.py         # 统一项目状态检查器（替代旧的独立检查脚本）
+│   ├── test_project.py          # 统一项目测试器（GPU、依赖、RAFT、深度、Phase 3）
+│   │
+│   ├── cpu/                     # CPU 环境
+│   │   ├── requirements.txt
+│   │   ├── README.md
+│   │   ├── install.bat
+│   │   ├── install.ps1
+│   │   └── setup_and_test.py
+│   │
+│   └── gpu/                     # GPU 环境
+│       ├── requirements.txt
+│       ├── README.md
+│       ├── install_gpu.bat
+│       ├── install_gpu.sh
+│       ├── switch_to_gpu.bat
+│       └── switch_to_gpu.sh
 │
-├── 📁 scripts/                 # 安装和测试脚本
-│   ├── README_SCRIPTS.md      # 脚本使用说明
-│   ├── check_project.py       # 项目检查工具
-│   ├── test_project.py        # 项目测试工具
+├── web/                        # Web 前端 + 后端
+│   ├── frontend/                # Vue 3 + Vite 前端
+│   │   ├── package.json
+│   │   ├── vite.config.js
+│   │   ├── index.html
+│   │   ├── main.js
+│   │   ├── App.vue
+│   │   ├── style.css
+│   │   ├── .env.development
+│   │   ├── .env.production
+│   │   └── src/
+│   │       ├── api/index.js    # Axios API 封装（与后端通信）
+│   │       └── components/
+│   │           ├── VideoUpload.vue    # 拖拽上传视频
+│   │           ├── ModeSelector.vue   # 模式选择（1-6）
+│   │           ├── ProgressBar.vue    # 实时进度条
+│   │           └── ResultDisplay.vue  # 结果展示与下载
 │   │
-│   ├── 📁 cpu/                # CPU版本（本地开发）
-│   │   ├── README.md          # CPU安装说明
-│   │   ├── requirements.txt   # CPU依赖列表
-│   │   ├── install.bat        # Windows安装
-│   │   ├── install.ps1        # PowerShell安装
-│   │   └── setup_and_test.py  # 环境检查
-│   │
-│   └── 📁 gpu/                # GPU版本（云服务器部署）
-│       ├── README.md          # GPU部署说明
-│       ├── requirements.txt   # GPU依赖列表
-│       ├── install_gpu.bat    # Windows完整安装
-│       ├── install_gpu.sh     # Linux完整安装
-│       ├── switch_to_gpu.bat  # Windows快速切换
-│       └── switch_to_gpu.sh   # Linux快速切换
+│   └── backend/                 # FastAPI 后端
+│       ├── app.py              # FastAPI 主程序（上传、处理、轮询、下载）
+│       ├── process_worker.py    # 独立子进程处理 worker（可 kill）
+│       └── requirements.txt
 │
-├── 📁 web/                     # Web应用 ⭐ Phase 4
-│   ├── README.md              # Web使用指南
-│   │
-│   ├── 📁 backend/            # FastAPI后端（端口8000）
-│   │   ├── app.py             # API服务器主程序
-│   │   ├── process_worker.py  # 视频处理worker进程
-│   │   └── requirements.txt   # 后端Python依赖
-│   │
-│   └── 📁 frontend/           # Vue 3前端（端口3000）
-│       ├── package.json       # 前端npm依赖
-│       ├── vite.config.js     # Vite构建配置
-│       ├── index.html         # HTML入口
-│       ├── .env.development   # 开发环境配置
-│       ├── .env.production    # 生产环境配置
-│       └── src/
-│           ├── main.js        # 前端入口
-│           ├── App.vue        # 根组件
-│           ├── style.css      # 全局样式
-│           ├── api/
-│           │   └── index.js   # API封装
-│           └── components/    # Vue组件
-│               ├── VideoUpload.vue
-│               ├── ModeSelector.vue
-│               ├── ProgressBar.vue
-│               └── ResultDisplay.vue
+├── models/                     # 模型文件与配置
+│   ├── coco.names             # COCO 80 类物体名称
+│   ├── Ultralytics/           # Ultralytics（YOLOv8）配置与缓存
+│   └── README.md              # 模型说明与自动下载指引
 │
-└── 📁 docs/                    # 项目文档
-    ├── ARCHITECTURE.md        # 系统架构文档
-    ├── PROJECT_STRUCTURE.md   # 项目结构（本文件）
-    ├── FYP progress report 1st.docx  # 学校进度报告
-    └── 项目计划书.docx        # 学校项目计划
+├── data/                      # 运行时数据目录
+│   ├── cli/
+│   │   ├── input/             # CLI 模式输入视频存放（需手动创建）
+│   │   └── output/            # CLI 模式处理结果输出
+│   └── web/
+│       ├── uploads/           # Web 上传视频存放（由后端创建）
+│       └── outputs/           # Web 处理结果存放（由后端创建）
+│
+└── docs/                     # 项目文档
+    ├── PROJECT_STRUCTURE.md   # 本文件：详细目录结构
+    ├── TECHNICAL_REPORT.md    # 技术原理报告：六种模式 + 预处理的算法与论文
+    └── FYP_Progress_Report_2nd.md  # FYP 阶段进度报告
 ```
 
 ---
 
-## 🎯 文件组织原则
+## 2. 核心模块详解
 
-### 1. 根目录（最小化）✅
-只保留核心文件：
-- ✅ `main.py` - CLI模式程序入口
-- ✅ `README.md` - 项目总说明
-- ✅ Git配置文件
+### 2.1 核心模块入口
 
-### 2. data/ - 数据统一管理 ⭐
-```
-data/
-├── cli/          # CLI模式输入输出
-└── web/          # Web模式上传和结果
-```
-**优势**: CLI和Web数据完全分离，清晰易管理
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| **Mode 1** | `src/mode1_detection_tracking.py` | YOLOv8 检测 + ByteTrack 追踪，仅追踪不测速 |
+| **Mode 2** | `src/mode2_speed_estimation.py` | 物体标准尺寸标定 + EMA 平滑，固定摄像头 |
+| **Mode 3** | `src/mode3_raft_optical_flow.py` | RAFT 光流提取摄像头运动，已补偿速度 |
+| **Mode 4** | `src/mode4_depth_anything_v2.py` | Depth Anything V2 相对深度 + 透视修正 |
+| **Mode 5** | `src/mode5_metric3d_v2.py` | Metric3D v2 绝对度量深度 + 滑动窗口 3D 速度（**推荐**） |
+| **Mode 6** | `src/mode6_ego_speed.py` | 路面光流 + Metric3D v2，自车速度，无需 YOLO |
 
-### 3. src/ - 核心处理代码 ✅
-```
-src/
-├── Mode 1: mode1_detection_tracking.py    # 检测+追踪
-├── Mode 2: mode2_speed_estimation.py      # 速度估算
-├── Mode 3: mode3_raft_optical_flow.py     # RAFT光流
-├── Mode 4: mode4_depth_anything_v2.py     # Depth Anything V2
-├── Mode 5: mode5_metric3d_v2.py           # Metric3D v2
-├── Modules: optical_flow_raft.py, depth_estimation.py, depth_estimation_metric3d.py
-└── Config: config.py, model_config.py
-```
+### 2.2 底层算法模块
 
-### 4. web/ - Web应用 ⭐ Phase 4
-```
-web/
-├── backend/      # FastAPI RESTful API
-│   ├── app.py
-│   └── process_worker.py
-└── frontend/     # Vue 3 + Vite
-    └── src/      # 组件化开发
-```
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| **RAFT 光流** | `src/optical_flow_raft.py` | RAFT 稠密光流算法封装，支持 GPU/CPU 自动切换 |
+| **Depth Anything V2** | `src/depth_estimation.py` | 单目相对深度估计（输出 0-1 归一化值） |
+| **Metric3D v2** | `src/depth_estimation_metric3d.py` | 单目绝对度量深度（输出真实米数） |
 
-### 5. scripts/ - 安装和工具
-```
-scripts/
-├── cpu/          # 本地开发（CPU版本）
-└── gpu/          # 云服务器（GPU版本）
-```
-**详细说明**: 参见 `scripts/README_SCRIPTS.md`
+### 2.3 预处理模块
 
-### 6. docs/ - 项目文档
-- `ARCHITECTURE.md` - 系统架构
-- `PROJECT_STRUCTURE.md` - 本文件
-- 学校文档（不修改）
-
-### 7. models/ & trackers/
-- `models/` - AI模型权重文件
-- `trackers/` - 追踪算法实现
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| **质量检测** | `src/quality_detector.py` | 检测模糊 / 雾气 / 亮度三类问题 |
+| **视频增强** | `src/enhance_video.py` | DCP 去雾 / 维纳去模糊 / CLAHE 亮度增强 |
 
 ---
 
-## 🚀 快速导航
+## 3. Web 模块架构
 
-### 📖 新手入门
-1. **阅读总文档**: `README.md`
-2. **查看项目结构**: `docs/PROJECT_STRUCTURE.md`（本文件）
-3. **安装环境**: `scripts/cpu/README.md` 或 `scripts/gpu/README.md`
+### 3.1 前端（Vue 3 + Vite）
 
-### 💻 CLI模式使用
-```bash
-# 1. 放视频到 data/cli/input/
-# 2. 运行程序
-python main.py
+前端为单页应用（SPA），包含以下组件：
 
-# 3. 查看结果 data/cli/output/
-```
+| 组件 | 文件 | 功能 |
+|------|------|------|
+| **App.vue** | `src/App.vue` | 根组件，布局容器 |
+| **VideoUpload** | `src/components/VideoUpload.vue` | 拖拽上传视频，支持 FOV 参数输入 |
+| **ModeSelector** | `src/components/ModeSelector.vue` | 模式选择（Mode 1-6），不同模式展示不同参数选项 |
+| **ProgressBar** | `src/components/ProgressBar.vue` | 实时进度条，显示当前处理阶段 |
+| **ResultDisplay** | `src/components/ResultDisplay.vue` | 结果展示与下载，包含视频预览和 CSV 数据展示 |
 
-### 🌐 Web模式使用
-```bash
-# 后端
-cd web/backend
-python app.py
+### 3.2 后端（FastAPI）
 
-# 前端（新终端）
-cd web/frontend
-npm run dev
-```
+| 端点 | 说明 |
+|------|------|
+| `POST /upload` | 上传视频文件 |
+| `POST /process` | 启动视频处理（异步，后端启动子进程） |
+| `GET /status` | 轮询处理进度 |
+| `GET /download/{filename}` | 下载处理结果（视频或 CSV） |
+| `GET /logs/{task_id}` | 获取处理日志 |
+| `DELETE /cancel/{task_id}` | 取消正在运行的处理任务 |
 
-### 🔧 开发相关
-- **项目检查**: `scripts/check_project.py`
-- **项目测试**: `scripts/test_project.py`
-- **架构文档**: `docs/ARCHITECTURE.md`
+### 3.3 前后端通信
+
+前端通过 Axios（`src/api/index.js`）向后端 API 发送请求，使用 JSON 交互。生产环境下前后端同源部署（Vite proxy 代理 `/api` 请求到 FastAPI 端口）。
 
 ---
 
-## 📊 统计信息
+## 4. 数据目录说明
 
-| 模块 | 文件数量 | 说明 |
-|------|---------|------|
-| 根目录 | 2个 | main.py + README.md |
-| src/ | 13个 | 核心处理代码 (5个Mode + 3个模块 + 2个Legacy + 配置) |
-| web/ | 20+ | Vue组件+API |
-| scripts/ | 15+ | 安装脚本和工具 |
-| docs/ | 4个 | 项目文档 |
-
-**总计**: 约50+关键文件
+| 目录 | 用途 | 创建时机 |
+|------|------|---------|
+| `data/cli/input/` | 存放 CLI 模式输入视频 | 用户手动创建或运行时自动创建 |
+| `data/cli/output/` | 存放 CLI 模式处理结果（视频、CSV） | 运行时自动创建 |
+| `data/web/uploads/` | 存放 Web 上传的视频文件 | FastAPI 启动时自动创建 |
+| `data/web/outputs/` | 存放 Web 处理结果 | FastAPI 启动时自动创建 |
 
 ---
 
-## ✅ 优化效果
+## 5. 模型文件说明
 
-### 整理前
-```
-根目录混乱：
-- requirements.txt (旧版本)
-- requirements_phase3.txt
-- requirements_gpu.txt
-- check_gpu_status.py
-- test_phase3_dependencies.py
-- INSTALLATION_GUIDE.md
-```
+### 5.1 随代码附送（已提交到 Git）
 
-### 整理后
-```
-根目录清爽：
-- main.py
-- README.md
-- Git配置文件
+| 文件 | 说明 |
+|------|------|
+| `models/coco.names` | COCO 80 类物体名称列表 |
+| `cfg/bytetrack_stable.yaml` | ByteTrack 追踪器配置文件 |
+| `models/Ultralytics/settings.json` | Ultralytics 全局设置 |
+| `models/Ultralytics/persistent_cache.json` | Ultralytics 模型缓存元数据 |
 
-其他文件已归类到：
-- scripts/cpu/requirements.txt
-- scripts/gpu/requirements.txt
-- scripts/check_gpu_status.py
-- scripts/test_dependencies.py
-- docs/INSTALLATION_GUIDE.md
-```
+### 5.2 自动下载（运行时，首次使用时下载）
 
-**提升：** 根目录文件数量 从 9个 减少到 3个！
+| 模型 | 下载方式 | 存放位置 |
+|------|---------|---------|
+| YOLOv8n | Ultralytics 自动下载 | `models/` 或 `~/.ultralytics/` |
+| RAFT-Small | PyTorch Hub 自动下载 | `~/.cache/torch/hub/` |
+| Depth Anything V2 | HuggingFace `transformers` 自动下载 | `~/.cache/huggingface/` |
+| Metric3D v2 | PyTorch Hub 自动下载 | `~/.cache/torch/hub/` |
+
+> **注意**：运行 `main.py --mode 1` 时，如果模型文件不存在，系统会自动下载，无需手动操作。详细说明请参考 `models/README.md`。
 
 ---
 
-## 🎓 设计理念
+## 6. 主要配置参数
 
-### 1. 清晰的分层
-- **根目录**: 最小化，只有核心入口
-- **src/**: 程序代码
-- **scripts/**: 工具脚本
-- **docs/**: 文档
+### 6.1 全局配置（`src/config.py`）
 
-### 2. 明确的分类
-- **CPU vs GPU**: 分别管理，避免混淆
-- **代码 vs 文档**: 严格分离
-- **工具 vs 核心**: 职责清晰
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `CONFIDENCE_THRESHOLD` | 0.25 | YOLOv8 检测置信度阈值 |
+| `IOU_THRESHOLD` | 0.45 | ByteTrack IoU 匹配阈值 |
+| `MAX_AGE` | 30 | ByteTrack 最大未匹配帧数 |
+| `N_INIT_FRAMES` | 3 | ByteTrack 初始化帧数 |
+| `EMA_ALPHA_SPEED` | 0.3 | Mode 2/3/4 速度 EMA 平滑系数 |
+| `WARMUP_FRAMES` | 30 | Mode 6 预热帧数 |
 
-### 3. 易于维护
-- 每个文件夹都有 README.md
-- 相关文件放在一起
-- 路径引用清晰
+### 6.2 Mode 5/6 专用参数（`src/mode5_metric3d_v2.py` / `src/mode6_ego_speed.py`）
 
----
-
-## 📚 相关文档
-
-- **README.md** - 项目主文档
-- **docs/ARCHITECTURE.md** - 系统架构
-- **docs/INSTALLATION_GUIDE.md** - 安装指南
-- **scripts/README_SCRIPTS.md** - 脚本说明
+| 参数 | Mode 5 | Mode 6 | 说明 |
+|------|--------|--------|------|
+| 滑动窗口大小 | 7 帧 | N/A | Mode 5 速度计算基线 |
+| 深度采样 | BBox 中值 | 路面区域随机 500 点 | 物体 vs 路面 |
+| 深度频率 | 每 5 帧 | 每 5 帧 | 深度估计频率 |
+| 平滑系数 | EMA α=0.4 | Warmup α=0.5 / Steady α=0.2 | 速度 EMA |
+| 路面区域比例 | N/A | 底部 40% | Mode 6 采样区域 |
+| 速度上限 | 无 | 200 km/h | Mode 6 硬上限 |
 
 ---
 
-## 🎉 总结
+## 7. 输出文件说明
 
-**项目结构现在：**
-- ✅ 根目录干净整洁
-- ✅ 文件分类清晰
-- ✅ CPU/GPU环境分离
-- ✅ 文档集中管理
-- ✅ 易于导航和维护
+### 7.1 CLI 输出（Mode 1-6）
 
-**适合：**
-- 团队协作
-- 版本控制
-- 长期维护
-- FYP答辩展示
+| 文件类型 | 说明 |
+|---------|------|
+| `*_annotated.mp4` | 带检测框、速度标签的标注视频 |
+| `*_frames.csv` | 逐帧明细数据（Mode 5） |
+| `*_objects.csv` | 按车辆汇总数据（Mode 5） |
+| `*_stats.csv` | 按秒汇总统计（Mode 6） |
+| `*_crops/` | 每辆车首帧检测截图（Mode 5） |
+
+### 7.2 Web 输出
+
+通过 `ResultDisplay.vue` 组件在线预览和下载，结果与 CLI 输出格式相同。
+
+---
+
+## 8. 依赖关系图
+
+```
+main.py
+  ├── src/model_config.py          ← 必须在任何 DL 库之前导入
+  ├── src/mode1_detection_tracking.py
+  │     ├── src/optical_flow_raft.py         (Mode 3-6 共享)
+  │     ├── src/depth_estimation.py          (Mode 4)
+  │     ├── src/depth_estimation_metric3d.py  (Mode 5-6)
+  │     └── (Ultralytics 内置 ByteTrack via model.track)
+  ├── src/mode2_speed_estimation.py
+  ├── src/mode3_raft_optical_flow.py
+  ├── src/mode4_depth_anything_v2.py
+  ├── src/mode5_metric3d_v2.py
+  └── src/mode6_ego_speed.py
+
+web/backend/app.py
+  ├── src/mode5_metric3d_v2.py    (或任意其他 mode)
+  └── src/process_worker.py
+
+web/frontend/ (Vite dev server)
+  └── src/api/index.js            → FastAPI backend
+```
+
+---
+
+## 9. 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| `README.md` | 项目概述、快速开始、演示截图 |
+| `PROJECT_STRUCTURE.md` | 本文档：详细目录结构、模块关系、配置说明 |
+| `TECHNICAL_REPORT.md` | 六种处理模式的算法原理、公式推导、论文出处 |
+| `docs/FYP_Progress_Report_2nd.md` | FYP 阶段进度报告 |
+| `scripts/README_SCRIPTS.md` | 脚本目录导航 |
+| `models/README.md` | 模型文件说明与自动下载指引 |
+| `web/README.md` | Web 部署指南 |
+| `scripts/cpu/README.md` | CPU 环境安装指南 |
+| `scripts/gpu/README.md` | GPU 环境安装与部署指南 |

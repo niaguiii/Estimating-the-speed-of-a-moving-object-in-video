@@ -1,5 +1,13 @@
 # Web应用 - 视频速度估算系统
 
+**[本文档 web/README.md]** — 前端/后端部署、API文档、开发指南
+
+**[项目概述 README.md]** — 项目概述、快速开始、功能演示、模式选择指南
+
+**[项目结构 docs/PROJECT_STRUCTURE.md]** — 详细目录结构、模块关系、配置说明
+
+**[技术报告 docs/TECHNICAL_REPORT.md]** — 六种模式 + 预处理的算法原理、公式推导、论文出处
+
 ## 🚀 快速启动
 
 ### 1. 首次安装依赖
@@ -35,29 +43,26 @@ web/
 │   ├── process_worker.py  # 处理worker进程
 │   └── requirements.txt   # Python依赖
 │
-├── frontend/               # Vue 3 + Vite 前端（端口3000）
-│   ├── package.json       # 前端依赖配置
-│   ├── vite.config.js     # Vite构建配置
-│   ├── index.html         # HTML入口
-│   ├── .env.development   # 开发环境配置
-│   ├── .env.production    # 生产环境配置
-│   └── src/
-│       ├── main.js        # 入口文件
-│       ├── App.vue        # 根组件
-│       ├── style.css      # 全局样式
-│       ├── api/
-│       │   └── index.js   # API封装
-│       └── components/    # Vue组件
-│
-└── 注：上传和输出文件存储在项目根目录的 data/web/ 下
-    ├── data/web/uploads/  # Web上传文件
-    └── data/web/outputs/  # Web处理结果
+└── frontend/               # Vue 3 + Vite 前端（端口3000）
+    ├── package.json       # 前端依赖配置
+    ├── vite.config.js     # Vite构建配置
+    ├── index.html         # HTML入口
+    ├── main.js            # 入口文件
+    ├── App.vue            # 根组件
+    ├── style.css          # 全局样式
+    ├── .env.development   # 开发环境配置
+    ├── .env.production    # 生产环境配置
+    └── src/
+        ├── api/
+        │   └── index.js   # API封装
         └── components/
             ├── VideoUpload.vue      # 上传组件
             ├── ModeSelector.vue     # 模式选择组件
-            ├── ProgressBar.vue      # 进度显示组件
+            ├── ProgressBar.vue     # 进度显示组件
             └── ResultDisplay.vue    # 结果显示组件
 ```
+
+**数据存储：** 上传视频存储在项目根目录的 `data/web/uploads/`，处理结果存储在 `data/web/outputs/`（由后端自动创建）
 
 **技术栈：** Vue 3 + Vite + Axios + FastAPI
 
@@ -66,7 +71,7 @@ web/
 ## 🎯 功能特性
 
 - **视频上传**：拖拽或点击上传
-- **4种处理模式**：检测、追踪、速度估算、光流分析
+- **6种处理模式**：检测、追踪、速度估算、光流分析、深度感知、绝对深度
 - **实时进度**：百分比、耗时、状态更新
 - **连接监控**：实时后端连接状态指示
 - **错误检测**：自动错误反馈和恢复
@@ -83,9 +88,11 @@ web/
 
 ### 步骤2：选择处理模式
 - **模式1**：检测+追踪
-- **模式2**：检测+追踪+速度 ⭐ **（CPU友好，推荐）**
-- **模式3**：RAFT光流（适合移动摄像头）
-- **模式4**：RAFT+深度估算（最高精度）
+- **模式2**：检测+追踪+速度
+- **模式3**：RAFT光流（移动摄像头支持）
+- **模式4**：RAFT+深度估算
+- **模式5**：RAFT+绝对深度（最高精度）
+- **模式6**：自车测速
 
 ### 步骤3：观察进度
 - 实时进度条（0% → 100%）
@@ -339,7 +346,7 @@ curl http://localhost:8000/docs
 
 ```
 1. 用户上传 "test_video.mp4"（30秒）
-   → 保存到：backend/uploads/abc123.mp4
+   → 保存到：data/web/uploads/abc123.mp4
 
 2. 用户选择模式2
 
@@ -348,7 +355,7 @@ curl http://localhost:8000/docs
    → 每2秒更新进度
 
 4. 处理完成（5分钟后）
-   → 结果保存到：backend/outputs/task_xyz_output.mp4
+   → 结果保存到：data/web/outputs/{task_id}_output.mp4
 
 5. 前端显示结果
    → 用户可以预览或下载

@@ -290,7 +290,64 @@ def main():
     
     # 选择模型版本
     model_version = select_model_version()
-    
+
+    # ========== 预处理增强（自动检测 + 可选处理）==========
+    # 导入检测模块（懒加载，失败不影响主流程）
+    enhancement_options = []  # 默认不预处理
+    try:
+        from src.quality_detector import detect_video_quality, QualityReport
+        print("\n" + "=" * 60)
+        print("🔍 视频质量自动检测中...")
+        print("=" * 60)
+        report = detect_video_quality(selected_video)
+        print(f"  清晰度: Laplacian方差 = {report.blur_index:.1f}  [{report.blur_level}]")
+        print(f"  雾气:   暗通道均值 = {report.haze_index:.1f}  [{report.haze_level}]")
+        print(f"  亮度:   亮度指数 = {report.brightness_index:.3f}  [{report.brightness_level}]")
+        print(f"  采样帧数: {report.sampled_frames}/{report.total_frames}")
+
+        if report.needs_enhancement:
+            print(f"\n  ⚠️  检测到以下问题: {', '.join(report.issues)}")
+            print("\n  预处理增强选项:")
+            print("  0. 跳过预处理（直接处理视频，默认）")
+            print("  1. 检测报告（仅显示，不处理）")
+            print("  2. 自动处理（处理全部检测到的问题）")
+            print("  3. 手动选择：")
+            issue_labels = {
+                'blur': '3a. 去模糊 (Wiener反卷积)',
+                'haze': '3b. 去雾 (DCP暗通道先验)',
+                'brightness': '3c. 提亮 (CLAHE+Gamma)',
+            }
+            for issue in report.issues:
+                print(f"       {issue_labels.get(issue, issue)}")
+
+            choice = input("\n  选择预处理选项 (0-3, 默认 0): ").strip()
+            if choice == '1':
+                print("\n  [检测模式] 仅显示报告，不执行预处理")
+            elif choice == '2':
+                enhancement_options = report.issues
+                print(f"\n  [自动增强] 将处理: {', '.join(enhancement_options)}")
+            elif choice == '3':
+                selected = []
+                valid_keys = {'a': 'blur', 'b': 'haze', 'c': 'brightness'}
+                sub_choice = input("  输入选项 (如 ab / ac / abc，空格分隔: ").strip().lower()
+                for ch in sub_choice:
+                    if ch in valid_keys and valid_keys[ch] in report.issues:
+                        selected.append(valid_keys[ch])
+                enhancement_options = selected
+                if enhancement_options:
+                    print(f"  [手动选择] 将处理: {', '.join(enhancement_options)}")
+                else:
+                    print("  [无选择] 跳过预处理")
+            else:
+                print("  [跳过] 不执行预处理")
+        else:
+            print("\n  ✅ 视频质量良好，无需预处理")
+
+    except ImportError:
+        print("\n  [提示] 预处理模块不可用，跳过质量检测")
+    except Exception as e:
+        print(f"\n  [提示] 预处理检测失败，继续直接处理: {e}")
+
     # 生成输出文件名
     output_path = get_output_filename(selected_video)
     base_name = os.path.splitext(output_path)[0]
@@ -329,7 +386,47 @@ def main():
     choice = input("\nShow video window? (y/n, default y): ").lower().strip()
     if choice == 'n':
         show_window = False
-    
+
+    # ========== 执行预处理增强 ==========
+    current_video = selected_video
+    if enhancement_options:
+        try:
+            from src.quality_detector import detect_video_quality
+            from src.enhance_video import enhance_video
+            from src.quality_detector import QualityReport
+
+            report = detect_video_quality(selected_video)
+            # 中间增强文件路径（临时）
+            enhanced_path = selected_video.rsplit('.', 1)
+            enhanced_path = f"{enhanced_path[0]}_enhanced.{enhanced_path[1]}"
+
+            print(f"\n{'=' * 60}")
+            print(f"🔧 正在执行预处理增强...")
+            print(f"{'=' * 60}")
+
+            def progress_cb(pct, msg):
+                print(f"\r  进度: {pct:.0f}%  {msg}", end='', flush=True)
+
+            success, applied = enhance_video(
+                input_path=selected_video,
+                output_path=enhanced_path,
+                issues=enhancement_options,
+                quality_report=report,
+                progress_callback=progress_cb,
+                brightness_level=report.brightness_level
+            )
+            print()  # 换行
+
+            if success and os.path.exists(enhanced_path):
+                current_video = enhanced_path
+                print(f"  ✅ 增强完成，已应用: {', '.join(applied)}")
+            else:
+                print(f"  ⚠️ 增强失败，将使用原始视频")
+        except ImportError:
+            print("\n  [提示] 预处理模块不可用，跳过增强")
+        except Exception as e:
+            print(f"\n  [提示] 预处理增强失败: {e}")
+
     # 处理视频
     try:
         # 根据版本导入对应模块
@@ -365,7 +462,7 @@ def main():
 
             from src.mode5_metric3d_v2 import process_video_metric3d
             success = process_video_metric3d(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 conf_threshold=0.25,
@@ -378,7 +475,7 @@ def main():
             # Mode 4: Depth Anything V2 (相对深度)
             from src.mode4_depth_anything_v2 import process_video_phase3
             success = process_video_phase3(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 conf_threshold=0.25,
@@ -389,7 +486,7 @@ def main():
             # Mode 3: RAFT Optical Flow
             from src.mode3_raft_optical_flow import process_video_with_raft
             success = process_video_with_raft(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 conf_threshold=0.25,
@@ -399,7 +496,7 @@ def main():
             # Mode 2: Speed Estimation
             from src.mode2_speed_estimation import process_video
             success = process_video(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 conf_threshold=0.25
@@ -423,7 +520,7 @@ def main():
 
             from src.mode6_ego_speed import process_video_ego_speed
             success = process_video_ego_speed(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 fov_degrees=fov_degrees,
@@ -435,7 +532,7 @@ def main():
             # Mode 1: Detection + Tracking
             from src.mode1_detection_tracking import process_video
             success = process_video(
-                input_path=selected_video,
+                input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 conf_threshold=0.25
@@ -447,7 +544,10 @@ def main():
             print("=" * 60)
             print(f"[OK] Output saved: {output_path}")
             print(f"[OK] Mode: {mode_names.get(model_version, model_version)}")
-            
+
+            if enhancement_options:
+                print(f"[OK] Pre-enhancement: {', '.join(enhancement_options)}")
+
             if model_version == 'ego':
                 print("[OK] Ego speed: RAFT + Metric3D v2 road surface sampling")
                 print("[OK] No YOLO detection needed - measures your own vehicle speed!")

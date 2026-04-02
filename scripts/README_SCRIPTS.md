@@ -166,7 +166,7 @@ chmod +x switch_to_gpu.sh
 1. 租用GPU服务器
 2. 上传项目到服务器
 3. 运行 `cd scripts/gpu && install_gpu.bat`
-4. 验证GPU: `python check_gpu_status.py`
+4. 验证GPU: `python scripts/test_project.py --mode gpu`
 5. 处理完整视频: `python main.py`
 
 ---
@@ -322,7 +322,7 @@ python scripts/test_project.py --mode all
 
 - **cpu/README.md** - CPU环境详细说明
 - **gpu/README.md** - GPU环境详细说明
-- **../docs/INSTALLATION_GUIDE.md** - 完整安装指南
+- **../docs/PROJECT_STRUCTURE.md** - 项目结构文档
 - **../README.md** - 项目主文档
 
 ---

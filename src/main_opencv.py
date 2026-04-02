@@ -9,13 +9,8 @@ import argparse
 import sys
 import urllib.request
 
-# 导入追踪器模块
-try:
-    from trackers.byte_tracker import ByteTrackWrapper, SimpleTracker, create_tracker
-    BYTETRACK_AVAILABLE = True
-except ImportError:
-    BYTETRACK_AVAILABLE = False
-    print("⚠️ 追踪器模块未找到，将使用内置 SimpleTracker")
+# 追踪器可用性检测（预留接口，实际使用Ultralytics内置ByteTrack）
+# ByteTrack功能已集成到核心mode文件中，此文件为遗留参考实现
 
 class OpenCVObjectDetector:
     def __init__(self):
@@ -353,18 +348,9 @@ def process_video(input_path, output_path=None, show_video=True, use_bytetrack=T
     print("正在初始化检测器...")
     detector = OpenCVObjectDetector()
     
-    # 选择追踪器
-    if use_bytetrack and BYTETRACK_AVAILABLE:
-        try:
-            tracker = create_tracker('bytetrack', track_thresh=0.25, track_buffer=30)
-            print("🚀 使用 ByteTrack 高精度追踪器")
-        except Exception as e:
-            print(f"⚠️ ByteTrack 初始化失败: {e}")
-            tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
-            print("📌 回退到 SimpleTracker")
-    else:
-        tracker = SimpleTracker() if not BYTETRACK_AVAILABLE else create_tracker('simple')
-        print("📌 使用 SimpleTracker 追踪器")
+    # 使用内置 SimpleTracker
+    tracker = SimpleTracker()
+    print("📌 使用 SimpleTracker 追踪器")
     
     # 打开视频
     cap = cv2.VideoCapture(input_path)

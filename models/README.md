@@ -4,10 +4,8 @@
 
 ```
 models/
-├── README.md                    # ✅ 本文件（已包含）
-├── coco.names                   # ✅ COCO类别名称（已包含，1KB）
-├── .gitkeep                     # ✅ 保持目录结构
-├── yolov8n.pt                   # ✅ YOLOv8模型（已包含，6MB）
+├── README.md                    # ✅ 本文件
+├── coco.names                   # ✅ COCO类别名称（已包含）
 │
 ├── hub/                         # ⏳ RAFT模型缓存（首次运行自动下载）
 │   └── checkpoints/
@@ -22,6 +20,8 @@ models/
     Size: ~500MB (small) / ~1.3GB (large) / ~1.6GB (giant2)
 ```
 
+> **注意：** YOLOv8n.pt 模型在运行时由 Ultralytics 自动下载到 `models/` 或 `~/.ultralytics/` 目录，仓库中不包含此文件。
+
 ---
 
 ## 🤖 模型列表
@@ -34,13 +34,13 @@ models/
 | **大小** | 6MB |
 | **用途** | 物体检测（汽车、行人等） |
 | **来源** | Ultralytics |
-| **状态** | ✅ 已包含在仓库中 |
+| **状态** | ⏳ 运行时自动下载（首次使用） |
 
 **位置：**
-- 已包含：`models/yolov8n.pt`
-- 克隆仓库后即可直接使用
+- 运行时自动下载：`models/yolov8n.pt` 或 `~/.ultralytics/yolov8n.pt`
+- 克隆仓库后首次使用时自动下载
 
-**使用场景：** 所有模式（Mode 1-5）
+**使用场景：** 所有模式（Mode 1-5），Mode 6 不需要 YOLO
 
 ---
 
@@ -274,7 +274,7 @@ models/models--*/     # Hugging Face缓存
 ### 2. 磁盘空间
 
 确保有足够空间：
-- YOLOv8 nano: 6MB（已包含）
+- YOLOv8 nano: 6MB（运行时自动下载）
 - RAFT small: ~100MB（首次下载）
 - Depth Anything V2 small: ~400MB（首次下载）
 - **总计：~500MB**
@@ -294,7 +294,7 @@ models/models--*/     # Hugging Face缓存
 
 | 模型 | 大小 | 下载时间 | Git提交 | 用途 |
 |------|------|---------|---------|------|
-| **YOLOv8** | 6MB | - | ✅ 是 | 物体检测 |
+| **YOLOv8** | 6MB | 首次运行时 | ⏳ 否 | 物体检测 |
 | **RAFT** | ~100MB | 1-2分钟 | ❌ 否 | 光流估计 |
 | **Depth V2** | ~400MB | 2-5分钟 | ❌ 否 | 深度估计 |
 | **配置文件** | ~1KB | - | ✅ 是 | coco.names等 |

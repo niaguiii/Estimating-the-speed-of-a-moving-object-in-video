@@ -21,6 +21,7 @@
       v-if="currentStep === 'processing'"
       :task-id="taskId"
       :mode="selectedMode"
+      :enhanced-video-id="enhancedVideoId"
       @complete="handleComplete"
       @error="handleError"
     />
@@ -29,6 +30,7 @@
       v-if="currentStep === 'result'"
       :task-id="taskId"
       :mode="selectedMode"
+      :enhanced-video-id="enhancedVideoId"
       @reset="reset"
     />
   </div>
@@ -45,15 +47,17 @@ const currentStep = ref('upload')
 const videoId = ref('')
 const selectedMode = ref(null)
 const taskId = ref('')
+const enhancedVideoId = ref('')
 
 const handleUploadSuccess = (id) => {
   videoId.value = id
   currentStep.value = 'select'
 }
 
-const handleModeSelect = (mode, task) => {
+const handleModeSelect = (mode, task, enhancedVid) => {
   selectedMode.value = mode
   taskId.value = task
+  enhancedVideoId.value = enhancedVid || ''
   currentStep.value = 'processing'
 }
 

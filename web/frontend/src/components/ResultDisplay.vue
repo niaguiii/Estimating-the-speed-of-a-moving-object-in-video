@@ -11,6 +11,20 @@
         <video :src="resultVideoUrl" controls style="width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);"></video>
       </div>
 
+      <!-- 增强视频下载（仅当使用了增强预处理时显示） -->
+      <div v-if="props.enhancedVideoId" class="enhanced-download-card">
+        <div class="edc-info">
+          <span class="edc-icon">✨</span>
+          <div>
+            <div class="edc-title">增强版视频</div>
+            <div class="edc-desc">预处理增强后的视频（已用于本次速度估算）</div>
+          </div>
+        </div>
+        <a :href="enhancedVideoDownloadUrl" download class="zip-download-btn">
+          📥 下载增强视频
+        </a>
+      </div>
+
       <!-- 数据打包下载（统一 ZIP，所有 Mode 一致） -->
       <div class="data-section">
         <div class="data-section-title">📦 数据打包下载</div>
@@ -61,9 +75,9 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getDownloadUrl, getDataZipUrl } from '../api'
+import { getDownloadUrl, getDataZipUrl, getEnhancedVideoUrl } from '../api'
 
-const props = defineProps(['taskId', 'mode'])
+const props = defineProps(['taskId', 'mode', 'enhancedVideoId'])
 const emit = defineEmits(['reset'])
 
 const csvFiles  = ref([])
@@ -72,6 +86,9 @@ const zipUrl    = ref('')
 
 const resultVideoUrl = computed(() => getDownloadUrl(props.taskId))
 const downloadUrl    = computed(() => getDownloadUrl(props.taskId))
+const enhancedVideoDownloadUrl = computed(() =>
+  props.enhancedVideoId ? getEnhancedVideoUrl(props.enhancedVideoId) : ''
+)
 
 const zipName = computed(() => {
   const prefix = props.mode === 5 ? 'mode5' : props.mode === 6 ? 'mode6' : `mode${props.mode}`
@@ -260,5 +277,40 @@ onMounted(async () => {
     font-weight: bold;
     color: #333;
     text-align: center;
+}
+
+/* 增强视频下载区 */
+.enhanced-download-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: #eff6ff;
+    border: 2px solid #93c5fd;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    gap: 16px;
+}
+
+.edc-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.edc-icon {
+    font-size: 24px;
+}
+
+.edc-title {
+    font-weight: bold;
+    font-size: 14px;
+    color: #1e40af;
+}
+
+.edc-desc {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 2px;
 }
 </style>

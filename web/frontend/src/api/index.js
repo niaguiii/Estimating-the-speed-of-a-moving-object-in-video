@@ -13,14 +13,32 @@ export const uploadVideo = (file, onUploadProgress) => {
   })
 }
 
-export const processVideo = (videoId, mode, focalMm = null, depthFrequency = null) => {
+export const processVideo = (videoId, mode, focalMm = null, depthFrequency = null, applyEnhancement = false, enhancementOptions = null) => {
   const body = {
     video_id: videoId,
     mode: mode
   }
   if (focalMm !== null) body.focal_mm = focalMm
   if (depthFrequency !== null) body.depth_frequency = depthFrequency
+  if (applyEnhancement && enhancementOptions) {
+    body.apply_enhancement = true
+    body.enhancement_options = enhancementOptions
+  }
   return axios.post(`${apiBase}/api/process`, body)
+}
+
+export const detectQuality = (videoId, quick = false) => {
+  return axios.post(`${apiBase}/api/detect-quality`, {
+    video_id: videoId,
+    quick: quick
+  })
+}
+
+export const enhanceVideo = (videoId, enhancementOptions) => {
+  return axios.post(`${apiBase}/api/enhance`, {
+    video_id: videoId,
+    enhancement_options: enhancementOptions
+  })
 }
 
 export const getTaskStatus = (taskId) => {
@@ -39,6 +57,14 @@ export const getCsvFiles = (taskId) => {
     cropFiles: res.data.crop_files || [],
     zipUrl:    res.data.zip_url    || null,
   }))
+}
+
+export const getEnhancedVideoUrl = (videoId) => {
+  return `${apiBase}/api/download-enhanced/${videoId}`
+}
+
+export const getOriginalVideoUrl = (videoId) => {
+  return `${apiBase}/api/download-original/${videoId}`
 }
 
 export const getDataZipUrl = (taskId) => {

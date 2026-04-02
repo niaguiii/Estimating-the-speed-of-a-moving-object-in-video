@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 项目状态检查工具 - 统一检查脚本
-支持多种检查模式，替代原有的多个独立检查脚本
+支持多种检查模式
 """
 import os
 import sys
@@ -22,11 +22,11 @@ def check_basic_structure():
     required_dirs = [
         ("src", "核心代码目录"),
         ("models", "模型文件目录"),
-        ("input", "输入视频目录"),
-        ("output", "输出结果目录"),
+        ("cfg", "配置文件目录"),
+        ("data", "数据目录"),
         ("docs", "文档目录"),
         ("scripts", "脚本目录"),
-        ("trackers", "追踪器目录"),
+        ("web", "Web应用目录"),
     ]
     
     all_exist = True
@@ -41,20 +41,30 @@ def check_basic_structure():
     return all_exist
 
 
-def check_phase1_2():
-    """检查Phase 1 & 2文件"""
+def check_core_modules():
+    """检查核心模块文件"""
     print("\n" + "=" * 70)
-    print("📦 Phase 1 & 2 模块检查")
+    print("📦 核心模块检查")
     print("=" * 70)
     
     files = [
         ("main.py", "主程序入口"),
+        ("src/__init__.py", "模块初始化"),
         ("src/config.py", "配置文件"),
-        ("src/main_opencv.py", "Phase 1 - OpenCV实现"),
-        ("src/main_yolov8_bytetrack.py", "Phase 2 - ByteTrack追踪"),
-        ("src/main_yolov8_speed.py", "Phase 2 - 速度估算"),
-        ("trackers/byte_tracker.py", "ByteTrack封装"),
-        ("trackers/simple_tracker.py", "简单追踪器"),
+        ("src/model_config.py", "模型配置"),
+        ("src/mode1_detection_tracking.py", "Mode 1: 检测+追踪"),
+        ("src/mode2_speed_estimation.py", "Mode 2: 速度估算"),
+        ("src/mode3_raft_optical_flow.py", "Mode 3: RAFT光流"),
+        ("src/mode4_depth_anything_v2.py", "Mode 4: Depth Anything V2"),
+        ("src/mode5_metric3d_v2.py", "Mode 5: Metric3D v2"),
+        ("src/mode6_ego_speed.py", "Mode 6: 自车测速"),
+        ("src/optical_flow_raft.py", "RAFT光流封装"),
+        ("src/depth_estimation.py", "Depth Anything V2封装"),
+        ("src/depth_estimation_metric3d.py", "Metric3D v2封装"),
+        ("src/enhance_video.py", "视频增强模块"),
+        ("src/quality_detector.py", "质量检测模块"),
+        ("src/main_opencv.py", "遗留: OpenCV检测"),
+        ("src/main_yolov8_native.py", "遗留: YOLOv8原生"),
     ]
     
     all_exist = True
@@ -71,26 +81,28 @@ def check_phase1_2():
     return all_exist
 
 
-def check_phase3_modules():
-    """检查Phase 3核心模块"""
+def check_web_modules():
+    """检查Web模块"""
     print("\n" + "=" * 70)
-    print("🚀 Phase 3 核心模块检查")
+    print("🌐 Web模块检查")
     print("=" * 70)
     
-    modules = [
-        ("src/optical_flow_raft.py", "RAFT光流模块"),
-        ("src/depth_estimation.py", "Depth Anything V2模块"),
-        ("src/main_yolov8_raft.py", "RAFT集成版本"),
-        ("src/main_phase3_complete.py", "Phase 3完整版本"),
+    files = [
+        ("web/backend/app.py", "后端主程序"),
+        ("web/backend/process_worker.py", "处理Worker"),
+        ("web/frontend/src/App.vue", "前端根组件"),
+        ("web/frontend/src/api/index.js", "API封装"),
+        ("web/frontend/src/components/VideoUpload.vue", "上传组件"),
+        ("web/frontend/src/components/ModeSelector.vue", "模式选择组件"),
+        ("web/frontend/src/components/ProgressBar.vue", "进度条组件"),
+        ("web/frontend/src/components/ResultDisplay.vue", "结果展示组件"),
     ]
     
     all_exist = True
-    for file_path, desc in modules:
+    for file_path, desc in files:
         full_path = PROJECT_ROOT / file_path
         if full_path.exists():
-            size_kb = full_path.stat().st_size / 1024
             print(f"  ✅ {desc}")
-            print(f"     {file_path} ({size_kb:.1f}KB)")
         else:
             print(f"  ❌ {desc}: {file_path} [缺失]")
             all_exist = False
@@ -98,72 +110,91 @@ def check_phase3_modules():
     return all_exist
 
 
-def check_phase3_models():
-    """检查Phase 3预训练模型"""
+def check_scripts():
+    """检查脚本文件"""
     print("\n" + "=" * 70)
-    print("📦 Phase 3 预训练模型检查")
+    print("🛠️ 脚本文件检查")
     print("=" * 70)
     
-    # PyTorch缓存
-    torch_cache = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
-    print(f"\n  PyTorch缓存: {torch_cache}")
-    
-    if torch_cache.exists():
-        raft_models = list(torch_cache.glob("raft_*.pth"))
-        if raft_models:
-            for model in raft_models:
-                size_mb = model.stat().st_size / (1024 * 1024)
-                print(f"    ✅ {model.name} ({size_mb:.1f}MB)")
-        else:
-            print(f"    ⚪ RAFT模型未下载（首次使用时自动下载）")
-    else:
-        print(f"    ⚪ PyTorch缓存目录不存在")
-    
-    # Hugging Face缓存
-    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-    print(f"\n  Hugging Face缓存: {hf_cache}")
-    
-    if hf_cache.exists():
-        depth_models = [d for d in hf_cache.iterdir() if "depth-anything" in d.name.lower()]
-        if depth_models:
-            for model in depth_models:
-                print(f"    ✅ {model.name}")
-        else:
-            print(f"    ⚪ Depth Anything V2未下载（首次使用时自动下载）")
-    else:
-        print(f"    ⚪ Hugging Face缓存目录不存在")
-
-
-def check_phase3_integration():
-    """检查Phase 3在main.py中的集成"""
-    print("\n" + "=" * 70)
-    print("🔗 Phase 3 集成检查")
-    print("=" * 70)
-    
-    main_py = PROJECT_ROOT / "main.py"
-    if not main_py.exists():
-        print("  ❌ main.py不存在")
-        return False
-    
-    content = main_py.read_text(encoding='utf-8')
-    
-    checks = [
-        ("'raft'", "RAFT模式选项"),
-        ("'phase3'", "Phase 3模式选项"),
-        ("main_yolov8_raft", "RAFT模块导入"),
-        ("main_phase3_complete", "Phase 3模块导入"),
-        ("depth", "深度估计功能"),
+    files = [
+        ("scripts/check_project.py", "项目状态检查"),
+        ("scripts/test_project.py", "项目测试工具"),
+        ("scripts/README_SCRIPTS.md", "脚本目录说明"),
+        ("scripts/cpu/setup_and_test.py", "CPU环境测试"),
+        ("scripts/cpu/requirements.txt", "CPU依赖列表"),
+        ("scripts/gpu/install_gpu.bat", "GPU安装脚本"),
+        ("scripts/gpu/switch_to_gpu.bat", "GPU切换脚本"),
     ]
     
-    all_integrated = True
-    for keyword, desc in checks:
-        if keyword in content:
+    all_exist = True
+    for file_path, desc in files:
+        full_path = PROJECT_ROOT / file_path
+        if full_path.exists():
             print(f"  ✅ {desc}")
         else:
-            print(f"  ❌ {desc} [缺失]")
-            all_integrated = False
+            print(f"  ❌ {desc}: {file_path} [缺失]")
+            all_exist = False
     
-    return all_integrated
+    return all_exist
+
+
+def check_models():
+    """检查模型目录"""
+    print("\n" + "=" * 70)
+    print("🤖 模型文件检查")
+    print("=" * 70)
+    
+    files = [
+        ("cfg/bytetrack_stable.yaml", "ByteTrack配置"),
+        ("models/coco.names", "COCO类别名称"),
+        ("models/README.md", "模型说明文档"),
+    ]
+    
+    all_exist = True
+    for file_path, desc in files:
+        full_path = PROJECT_ROOT / file_path
+        if full_path.exists():
+            print(f"  ✅ {desc}")
+        else:
+            print(f"  ❌ {desc}: {file_path} [缺失]")
+            all_exist = False
+    
+    # 检查YOLOv8模型
+    yolo_path = PROJECT_ROOT / "models" / "yolov8n.pt"
+    if yolo_path.exists():
+        size_mb = yolo_path.stat().st_size / (1024 * 1024)
+        print(f"  ✅ YOLOv8模型: yolov8n.pt ({size_mb:.1f}MB)")
+    else:
+        print(f"  ⚠️ YOLOv8模型未找到（运行时自动下载）")
+    
+    return all_exist
+
+
+def check_docs():
+    """检查文档文件"""
+    print("\n" + "=" * 70)
+    print("📚 文档文件检查")
+    print("=" * 70)
+    
+    files = [
+        ("README.md", "项目主文档"),
+        ("docs/PROJECT_STRUCTURE.md", "项目结构文档"),
+        ("docs/TECHNICAL_REPORT.md", "技术原理报告"),
+        ("docs/FYP_Progress_Report_2nd.md", "阶段进度报告"),
+        ("web/README.md", "Web使用说明"),
+    ]
+    
+    all_exist = True
+    for file_path, desc in files:
+        full_path = PROJECT_ROOT / file_path
+        if full_path.exists():
+            size_kb = full_path.stat().st_size / 1024
+            print(f"  ✅ {desc} ({size_kb:.1f}KB)")
+        else:
+            print(f"  ❌ {desc}: {file_path} [缺失]")
+            all_exist = False
+    
+    return all_exist
 
 
 def test_imports():
@@ -176,25 +207,19 @@ def test_imports():
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
     
     modules_to_test = [
-        ("optical_flow_raft", ["RAFTOpticalFlow", "CameraMotionCompensator"]),
-        ("depth_estimation", ["DepthAnythingV2", "DepthBasedCalibrator"]),
-        ("main_yolov8_raft", ["SpeedEstimatorWithRAFT"]),
-        ("main_phase3_complete", ["Phase3SpeedEstimator"]),
+        ("config", "配置文件"),
+        ("model_config", "模型配置"),
+        ("quality_detector", "质量检测"),
+        ("enhance_video", "视频增强"),
     ]
     
     all_success = True
-    for module_name, classes in modules_to_test:
+    for module_name, desc in modules_to_test:
         try:
-            module = __import__(module_name)
-            print(f"\n  ✅ {module_name}")
-            for cls_name in classes:
-                if hasattr(module, cls_name):
-                    print(f"     - {cls_name}")
-                else:
-                    print(f"     ❌ {cls_name} [缺失]")
-                    all_success = False
+            __import__(module_name)
+            print(f"  ✅ {desc} ({module_name})")
         except ImportError as e:
-            print(f"  ❌ {module_name}: {e}")
+            print(f"  ❌ {desc} ({module_name}): {e}")
             all_success = False
     
     return all_success
@@ -207,24 +232,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 检查模式:
-  basic     - 基本结构检查
-  phase1-2  - Phase 1 & 2 检查
-  phase3    - Phase 3 快速检查
-  full      - 完整检查（包括导入测试）
-  all       - 所有检查
+  basic    - 基本结构检查
+  core     - 核心模块检查
+  web      - Web模块检查
+  scripts  - 脚本文件检查
+  models   - 模型文件检查
+  docs     - 文档文件检查
+  full     - 完整检查（包括导入测试）
+  all      - 所有检查
 
 示例:
-  python scripts/check_project.py             # 快速检查
-  python scripts/check_project.py --mode full # 完整检查
-  python scripts/check_project.py --mode all  # 全面检查
+  python scripts/check_project.py              # 快速检查基本结构
+  python scripts/check_project.py --mode core  # 检查核心模块
+  python scripts/check_project.py --mode full  # 完整检查
+  python scripts/check_project.py --mode all   # 全面检查
         """
     )
     
     parser.add_argument(
         '--mode',
-        choices=['basic', 'phase1-2', 'phase3', 'full', 'all'],
-        default='phase3',
-        help='检查模式 (默认: phase3)'
+        choices=['basic', 'core', 'web', 'scripts', 'models', 'docs', 'full', 'all'],
+        default='basic',
+        help='检查模式 (默认: basic)'
     )
     
     parser.add_argument(
@@ -247,13 +276,20 @@ def main():
     if args.mode in ['basic', 'all']:
         results.append(("基本结构", check_basic_structure()))
     
-    if args.mode in ['phase1-2', 'all']:
-        results.append(("Phase 1 & 2", check_phase1_2()))
+    if args.mode in ['core', 'full', 'all']:
+        results.append(("核心模块", check_core_modules()))
     
-    if args.mode in ['phase3', 'full', 'all']:
-        results.append(("Phase 3 模块", check_phase3_modules()))
-        results.append(("Phase 3 模型", check_phase3_models() or True))  # 模型检查不影响整体
-        results.append(("Phase 3 集成", check_phase3_integration()))
+    if args.mode in ['web', 'full', 'all']:
+        results.append(("Web模块", check_web_modules()))
+    
+    if args.mode in ['scripts', 'full', 'all']:
+        results.append(("脚本文件", check_scripts()))
+    
+    if args.mode in ['models', 'full', 'all']:
+        results.append(("模型文件", check_models()))
+    
+    if args.mode in ['docs', 'full', 'all']:
+        results.append(("文档文件", check_docs()))
     
     if args.mode in ['full', 'all'] or args.test_imports:
         results.append(("模块导入", test_imports()))

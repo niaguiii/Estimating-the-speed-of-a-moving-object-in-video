@@ -50,7 +50,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { getTaskStatus, cancelTask } from '../api'
 
-const props = defineProps(['taskId', 'mode'])
+const props = defineProps(['taskId', 'mode', 'enhancedVideoId'])
 const emit = defineEmits(['complete', 'error'])
 
 const taskProgress = ref(0.0)

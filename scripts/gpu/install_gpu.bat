@@ -70,15 +70,17 @@ echo ✅ PyTorch GPU版本安装完成
 
 echo.
 echo ================================================================
-echo [4/5] 安装Depth Anything V2依赖...
+echo [4/5] 安装Depth Anything V2 + Metric3D v2依赖...
 echo ================================================================
-pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0
+pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0 mmengine>=0.7.0 mmcv>=2.0.0 scipy>=1.7.0 einops>=0.6.0
 if errorlevel 1 (
-    echo ❌ Depth依赖安装失败
-    pause
-    exit /b 1
+    echo ⚠️  mmengine/mmcv安装失败，尝试分别安装...
+    pip install timm>=0.9.0 transformers>=4.30.0 huggingface-hub>=0.19.0
+    pip install scipy>=1.7.0 einops>=0.6.0
+    pip install mmengine>=0.7.0
+    pip install mmcv>=2.0.0
 )
-echo ✅ Depth Anything依赖安装完成
+echo ✅ Depth Anything V2 + Metric3D v2依赖安装完成
 
 echo.
 echo ================================================================
@@ -117,8 +119,9 @@ if "%cuda_choice%"=="1" (
 )
 echo   ✅ Torchvision (RAFT光流)
 echo   ✅ Depth Anything V2
+echo   ✅ Metric3D v2 (mmengine + mmcv + scipy + einops)
 echo   ✅ YOLOv8 + ByteTrack
-echo   ✅ 所有Phase 1/2/3依赖
+echo   ✅ 所有Phase 1/2/3/4/5依赖
 echo.
 echo 🚀 下一步：
 echo   1. 确认GPU可用（上面应该显示 CUDA: True）

@@ -27,7 +27,7 @@ echo "[2/4] Uninstalling CPU version..."
 pip uninstall torch torchvision -y
 
 echo ""
-echo "[3/4] Installing GPU version..."
+echo "[3/4] Installing GPU version of PyTorch..."
 if [ "$cuda_choice" = "1" ]; then
     echo "Installing PyTorch with CUDA 12.8 (for RTX 50 series)..."
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
@@ -35,6 +35,10 @@ else
     echo "Installing PyTorch with CUDA 11.8 (for RTX 40 series and below)..."
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 fi
+
+echo ""
+echo "[Supplement] Installing Mode 5/6 Metric3D v2 dependencies..."
+pip install mmengine>=0.7.0 mmcv>=2.0.0 scipy>=1.7.0 einops>=0.6.0
 
 echo ""
 echo "[4/4] Verifying GPU support..."

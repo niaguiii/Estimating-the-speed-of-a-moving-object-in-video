@@ -7,8 +7,18 @@
 __version__ = "2.0.0"
 __all__ = [
     'config',
+    'model_config',
     'main_opencv',
-    'main_yolov8_bytetrack',
     'main_yolov8_native',
-    'main_yolov8_speed'
+    'mode1_detection_tracking',
+    'mode2_speed_estimation',
+    'mode3_raft_optical_flow',
+    'mode4_depth_anything_v2',
+    'mode5_metric3d_v2',
+    'mode6_ego_speed',
+    'optical_flow_raft',
+    'depth_estimation',
+    'depth_estimation_metric3d',
+    'enhance_video',
+    'quality_detector',
 ]

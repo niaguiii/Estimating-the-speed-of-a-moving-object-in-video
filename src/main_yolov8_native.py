@@ -17,13 +17,8 @@ except ImportError:
 
 from ultralytics import YOLO
 
-# 导入追踪器模块
-try:
-    from trackers.byte_tracker import ByteTrackWrapper, SimpleTracker, create_tracker
-    BYTETRACK_AVAILABLE = True
-except ImportError:
-    BYTETRACK_AVAILABLE = False
-    print("⚠️ 追踪器模块未找到，将使用内置 SimpleTracker")
+# 追踪器可用性检测（预留接口，实际使用Ultralytics内置ByteTrack）
+# ByteTrack功能已集成到核心mode文件中，此文件为遗留参考实现
 
 class YOLOv8Detector:
     def __init__(self, model_name='yolov8n.pt'):

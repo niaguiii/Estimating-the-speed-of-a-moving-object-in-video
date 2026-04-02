@@ -86,16 +86,31 @@ chmod +x switch_to_gpu.sh
 - **RTX 50系列**：PyTorch 2.7.0+cu128 (CUDA 12.8) + Torchvision 0.18.0+cu128
 - **RTX 40系列及以下**：PyTorch 2.9.1+cu118 (CUDA 11.8) + Torchvision 0.24.1+cu118
 
-### Phase 3 依赖
+### Phase 3 & 4 依赖
 - timm (Depth Anything)
 - transformers
 - huggingface-hub
+- **mmengine + mmcv** (Metric3D v2)
+- **scipy + einops** (Mode 5/6)
 
 ### Phase 1 & 2 依赖
 - ultralytics (YOLOv8 + ByteTrack)
 - opencv-python
 - numpy, pandas, matplotlib
 - 所有其他依赖
+
+---
+
+### Mode 5 & 6 完整依赖（自动安装）
+| 组件 | 版本 | 用途 |
+|------|------|------|
+| mmengine | >=0.7.0 | Metric3D v2 引擎 |
+| mmcv | >=2.0.0 | OpenMMLab 视觉库 |
+| scipy | >=1.7.0 | 科学计算/插值 |
+| einops | >=0.6.0 | 张量操作(ViT) |
+
+> **Mode 5** = RAFT + Metric3D v2 + YOLOv8（测外部物体绝对速度）
+> **Mode 6** = RAFT + Metric3D v2，无 YOLO（测设备自身速度）
 
 ---
 
@@ -163,7 +178,7 @@ chmod +x install_gpu.sh
 cd ..
 
 # 检查GPU状态
-python check_gpu_status.py
+python test_project.py --mode gpu
 ```
 
 **期望输出：**
@@ -177,7 +192,8 @@ python check_gpu_status.py
 
 ```bash
 # 完整依赖测试
-python test_dependencies.py
+cd ..
+python test_project.py --mode deps
 
 # 返回根目录处理视频
 cd ..
@@ -286,8 +302,8 @@ pip install ... -i https://pypi.tuna.tsinghua.edu.cn/simple
 ### 验证GPU可用
 ```bash
 - [ ] nvidia-smi 显示GPU信息
-- [ ] cd scripts && python check_gpu_status.py 显示 CUDA: True
-- [ ] cd scripts && python test_dependencies.py 全部通过
+- [ ] python test_project.py --mode gpu 显示 CUDA: True
+- [ ] python test_project.py --mode deps 全部通过
 ```
 
 ### 测试功能
@@ -359,9 +375,8 @@ cd scripts/gpu && switch_to_gpu.bat    # Windows
 cd scripts/gpu && ./switch_to_gpu.sh   # Linux
 
 # 验证
-cd scripts
-python check_gpu_status.py
-python test_dependencies.py
+python test_project.py --mode gpu
+python test_project.py --mode deps
 
 # 处理视频
 cd ..
@@ -373,7 +388,7 @@ python main.py
 ## 📚 相关文档
 
 - **../cpu/README.md** - CPU环境安装
-- **../../INSTALLATION_GUIDE.md** - 完整安装指南
+- **../../docs/PROJECT_STRUCTURE.md** - 项目结构文档
 - **../../README.md** - 项目主文档
 
 ---
