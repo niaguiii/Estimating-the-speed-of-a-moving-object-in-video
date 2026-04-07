@@ -68,15 +68,6 @@ const uploadMessage = ref('')
 const videoId = ref('')
 const uploadProgress = ref(0)
 
-const handleFileSelect = (event) => {
-  const file = event.target.files[0]
-  if (file) {
-    uploadedFile.value = file
-    uploadSuccess.value = false
-    uploadMessage.value = ''
-  }
-}
-
 const handleDrop = (event) => {
   isDragging.value = false
   const file = event.dataTransfer.files[0]
