@@ -68,17 +68,23 @@ class DepthAnythingV2:
         print(f"[DepthAnything] Loading from: {model_name}")
         
         try:
-            # 加载预处理器和模型
             self.processor = AutoImageProcessor.from_pretrained(model_name)
             self.model = AutoModelForDepthEstimation.from_pretrained(model_name)
             self.model = self.model.to(self.device)
             self.model.eval()
-            
+            self._available = True
             print(f"[DepthAnything] Model loaded successfully")
         except Exception as e:
             print(f"[DepthAnything] Error loading model: {e}")
             print("[DepthAnything] Trying to download from Hugging Face...")
+            self._available = False
+            self.model = None
+            self.processor = None
             raise
+    
+    def is_available(self) -> bool:
+        """检查模型是否已成功加载"""
+        return getattr(self, '_available', False)
     
     def preprocess_image(self, image: np.ndarray) -> torch.Tensor:
         """

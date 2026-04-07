@@ -2,7 +2,7 @@
 # For fresh GPU servers (AutoDL, HengYuan, Aliyun, etc.)
 # 
 # IMPORTANT: For RTX 50 series (RTX 5090, etc.), use CUDA 12.8+
-#            For RTX 40 series and below, use CUDA 11.8
+#            For RTX 40 series and below, use CUDA 12.4
 #
 # INSTALLATION:
 #   Method 1 (Recommended): Run the installation script
@@ -14,19 +14,19 @@
 #     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 #     pip install -r scripts/gpu/requirements.txt
 #
-#   Method 3: Manual installation (CUDA 11.8 for RTX 40 series)
-#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   Method 3: Manual installation (CUDA 12.4 for RTX 40 series)
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 #     pip install -r scripts/gpu/requirements.txt
 
 # ====================================================================
 # Core Deep Learning Framework - GPU VERSION
 # ====================================================================
-# torch>=2.7.0+cu128         # For RTX 50 series (Installed separately via --index-url)
-# torchvision>=0.18.0+cu128  # For RTX 50 series (Installed separately via --index-url)
-# 
+# torch>=2.7.0+cu128         # For RTX 50 series (Blackwell): CUDA 12.8+ required (Installed separately via --index-url)
+# torchvision>=0.19.0+cu128  # For RTX 50 series (Installed separately via --index-url)
+#
 # OR
-# torch>=2.0.0+cu118         # For RTX 40 series and below (Installed separately via --index-url)
-# torchvision>=0.15.0+cu118  # For RTX 40 series and below (Installed separately via --index-url)
+# torch>=2.6.0+cu124         # For RTX 40 series (CUDA 12.4/12.6, recommended): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# torchvision>=0.17.0+cu124  # For RTX 40 series (Installed separately via --index-url)
 
 # ====================================================================
 # Phase 3 & Mode 4: Optical Flow & Depth Estimation
@@ -85,7 +85,7 @@ tqdm>=4.60.0                  # Progress bar
 # System Information
 # ====================================================================
 # Python: 3.8+
-# CUDA: 11.8 (recommended)
+# CUDA: 12.4 (RTX 40) / 12.8 (RTX 50) (recommended)
 # GPU Memory: 6GB+ (8GB+ recommended)
 # Disk Space: 10GB+
 # ====================================================================

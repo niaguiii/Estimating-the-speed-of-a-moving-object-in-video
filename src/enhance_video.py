@@ -22,14 +22,18 @@ import os
 def _read_video_info(video_path: str) -> dict:
     """读取视频基本信息"""
     cap = cv2.VideoCapture(video_path)
-    info = {
-        'fps': cap.get(cv2.CAP_PROP_FPS),
-        'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        'total_frames': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-        'fourcc': int(cap.get(cv2.CAP_PROP_FOURCC)),
-    }
-    cap.release()
+    if not cap.isOpened():
+        raise IOError(f"无法打开视频: {video_path}")
+    try:
+        info = {
+            'fps': cap.get(cv2.CAP_PROP_FPS),
+            'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            'total_frames': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+            'fourcc': int(cap.get(cv2.CAP_PROP_FOURCC)),
+        }
+    finally:
+        cap.release()
     return info
 
 
@@ -41,8 +45,37 @@ def _safe_cv2_write(writer: cv2.VideoWriter, frame: np.ndarray) -> bool:
             frame = np.clip(frame, 0, 255).astype(np.uint8)
         writer.write(frame)
         return True
-    except Exception:
+    except (AttributeError, cv2.error):
         return False
+
+
+def get_video_writer(output_path: str, fps: float, width: int, height: int) -> cv2.VideoWriter:
+    """
+    获取一个在浏览器中可正常播放的视频写入器。
+
+    策略：优先尝试 H.264（avc1），浏览器兼容性最好；
+    兜底 mp4v（OpenCV 默认，但浏览器支持差）。
+
+    Windows 上 OpenCV 对 H.264 的支持取决于编译时是否绑定了 ffmpeg，
+    如果 'avc1' 失败会自动降级。
+    """
+    # 优先 H.264（浏览器最兼容）
+    preferred = [('avc1', 'H.264/avc1'), ('H264', 'H.264/H264')]
+    fallback = [('mp4v', 'MP4V（兼容性差）')]
+
+    for fourcc_str, label in preferred + fallback:
+        fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        if writer.isOpened():
+            print(f"[VideoWriter] 使用 {label} 编码: {output_path}")
+            return writer
+        writer.release()
+
+    # 最后的兜底：尝试从输入视频复制编码参数
+    raise RuntimeError(
+        f"无法创建视频写入器（路径: {output_path}），"
+        "请检查 OpenCV 是否正确编译了 ffmpeg 支持。"
+    )
 
 
 # =============================================================================
@@ -89,13 +122,7 @@ def apply_dehazing_video(input_path: str,
     w, h = info['width'], info['height']
     total = info['total_frames']
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-    if not writer.isOpened():
-        print(f"[Dehazing] 无法创建输出视频: {output_path}")
-        cap.release()
-        return False
+    writer = get_video_writer(output_path, fps, w, h)
 
     processed = 0
 
@@ -141,8 +168,8 @@ def apply_dehazing_video(input_path: str,
                 guide=gray_3ch, radius=guided_radius, eps=1e-3
             ).filter(transmission.astype(np.float32))
             transmission = np.clip(transmission, t0, 1.0)
-        except Exception:
-            pass  # guided filter 不可用时跳过，使用原始透射率
+        except (cv2.error, AttributeError) as e:
+            print(f"[Dehazing] ⚠️  Guided Filter 不可用，跳过细化: {e}")
 
         # Step 5: 恢复无雾图像 J(x) = (I(x) - A) / t(x) + A
         frame_f = frame.astype(np.float32)
@@ -231,7 +258,7 @@ def _estimate_blur_kernel(frame: np.ndarray) -> Optional[np.ndarray]:
             return kernel
         return None
 
-    except Exception:
+    except (cv2.error, ValueError, AttributeError):
         return None
 
 
@@ -276,13 +303,7 @@ def apply_deblurring_video(input_path: str,
     w, h = info['width'], info['height']
     total = info['total_frames']
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-    if not writer.isOpened():
-        print(f"[Deblur] 无法创建输出视频: {output_path}")
-        cap.release()
-        return False
+    writer = get_video_writer(output_path, fps, w, h)
 
     # 预估计模糊核（取前30帧统计估计）
     estimated_kernel = None
@@ -411,13 +432,7 @@ def apply_brightness_video(input_path: str,
     w, h = info['width'], info['height']
     total = info['total_frames']
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-    if not writer.isOpened():
-        print(f"[Brightness] 无法创建输出视频: {output_path}")
-        cap.release()
-        return False
+    writer = get_video_writer(output_path, fps, w, h)
 
     is_overexposed = gamma > 1.0
     if not is_overexposed:
@@ -555,7 +570,7 @@ def enhance_video(input_path: str,
                 if os.path.exists(tf):
                     try:
                         os.remove(tf)
-                    except Exception:
+                    except OSError:
                         pass
             return False, applied
 
@@ -567,7 +582,7 @@ def enhance_video(input_path: str,
         if os.path.exists(tf):
             try:
                 os.remove(tf)
-            except Exception:
+            except OSError:
                 pass
 
     if progress_callback:

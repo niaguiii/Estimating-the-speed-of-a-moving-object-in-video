@@ -12,26 +12,26 @@ import sys
 # 获取项目根目录（无论从哪里运行都正确）
 def get_project_root():
     """获取项目根目录"""
-    current_dir = os.getcwd()
-    
+    cwd = os.getcwd()
+
     # 检查是否在src目录
-    if os.path.basename(current_dir) == 'src':
-        return os.path.dirname(current_dir)
-    
+    if os.path.basename(cwd) == 'src':
+        return os.path.dirname(cwd)
+
     # 检查是否在scripts目录
-    if 'scripts' in current_dir:
+    if 'scripts' in cwd:
         # 找到scripts的位置，返回其父目录
-        parts = current_dir.split(os.sep)
+        parts = cwd.split(os.sep)
         if 'scripts' in parts:
             idx = parts.index('scripts')
             return os.sep.join(parts[:idx])
-    
+
     # 检查是否在项目根目录（包含models文件夹）
-    if os.path.exists(os.path.join(current_dir, 'models')):
-        return current_dir
-    
+    if os.path.exists(os.path.join(cwd, 'models')):
+        return cwd
+
     # 默认返回当前目录
-    return current_dir
+    return cwd
 
 
 # 设置项目根目录和模型目录

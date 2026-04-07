@@ -66,17 +66,22 @@ class Metric3Dv2:
             )
             self.model = self.model.to(self.device)
             self.model.eval()
-            
+            self._available = True
             print(f"[Metric3D] Model loaded successfully")
             
         except Exception as e:
             print(f"[Metric3D] Error loading model: {e}")
             print("[Metric3D] Trying to download from GitHub...")
+            self._available = False
+            self.model = None
             raise
         
-        # 默认相机内参（可以后续修改）
         self.camera_intrinsics = None
         self.default_focal_length = 1000.0  # 默认焦距
+    
+    def is_available(self) -> bool:
+        """检查模型是否已成功加载"""
+        return getattr(self, '_available', False)
         
     def set_camera_intrinsics(self, fx: float, fy: float, cx: float, cy: float):
         """

@@ -24,7 +24,120 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
+from enhance_video import get_video_writer
 
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    """
+    写入带头部注释的 CSV 文件。
+
+    Args:
+        csv_path:     CSV 文件路径
+        fieldnames:   列名列表
+        rows:         数据行列表
+        header_lines: 每行一个注释字符串（如 "mode: 1 | unit: px/frame"）
+                      若为 None，写入默认表头说明
+    """
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        elif rows:
+            # 无显式注释时，写入列名解释
+            col_desc = {
+                'frame': 'Video frame number',
+                'track_id': 'Unique track ID assigned by ByteTrack',
+                'class_name': 'Object class predicted by YOLOv8',
+                'confidence': 'Detection confidence [0-1]',
+                'x1': 'Bounding box left-top X (pixels)',
+                'y1': 'Bounding box left-top Y (pixels)',
+                'x2': 'Bounding box right-bottom X (pixels)',
+                'y2': 'Bounding box right-bottom Y (pixels)',
+                'pixel_speed_px_per_frame': 'Object displacement per frame (pixels/frame)',
+                'speed_ms': 'Estimated speed (meters/second), based on object real-size calibration',
+                'speed_kmh': 'Estimated speed (kilometers/hour)',
+                'depth_normalized': 'Relative depth from Depth Anything V2 [0=far, 1=near]',
+                'depth_meters': 'Absolute depth from Metric3D v2 (meters)',
+                'cx': 'Object bounding box center X (pixels)',
+                'cy': 'Object bounding box center Y (pixels)',
+                'road_avg_depth_m': 'Average road depth sampled by EgoSpeed estimator (meters)',
+                'road_valid_pixels': 'Number of valid road pixels used in depth sampling',
+            }
+            for col in fieldnames:
+                desc = col_desc.get(col, col)
+                f.write(f"# {col}: {desc}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
+
+
+# =============================================================================
+# 物体尺寸标定 & 速度估算（与 mode2_speed_estimation 保持一致）
+# =============================================================================
+
+OBJECT_REAL_SIZES = {
+    # Vehicles
+    'car': {'width': 1.8, 'height': 1.5},
+    'truck': {'width': 2.5, 'height': 3.0},
+    'bus': {'width': 2.5, 'height': 3.2},
+    'motorcycle': {'width': 0.8, 'height': 1.2},
+    'bicycle': {'width': 0.6, 'height': 1.0},
+    # People
+    'person': {'width': 0.5, 'height': 1.7},
+    # Animals
+    'dog': {'width': 0.5, 'height': 0.6},
+    'cat': {'width': 0.4, 'height': 0.3},
+    'horse': {'width': 2.0, 'height': 1.6},
+    'bird': {'width': 0.15, 'height': 0.15},
+    'cow': {'width': 1.5, 'height': 1.4},
+    'sheep': {'width': 1.0, 'height': 0.9},
+    # Traffic
+    'traffic light': {'width': 0.3, 'height': 1.0},
+    'stop sign': {'width': 0.6, 'height': 0.6},
+    'fire hydrant': {'width': 0.4, 'height': 0.7},
+    'parking meter': {'width': 0.2, 'height': 1.2},
+    # Sports
+    'sports ball': {'width': 0.22, 'height': 0.22},
+    'baseball bat': {'width': 0.07, 'height': 0.9},
+    'tennis racket': {'width': 0.3, 'height': 0.7},
+    'frisbee': {'width': 0.27, 'height': 0.27},
+    'skis': {'width': 0.1, 'height': 1.7},
+    'snowboard': {'width': 0.3, 'height': 1.5},
+    'skateboard': {'width': 0.2, 'height': 0.8},
+    'surfboard': {'width': 0.5, 'height': 2.0},
+    # Large animals
+    'elephant': {'width': 3.5, 'height': 3.0},
+    'boat': {'width': 5.0, 'height': 1.5},
+}
+
+
+class SpeedEstimator:
+    """基于物体实际尺寸估算速度（与 mode2 逻辑一致）"""
+
+    def __init__(self, fps=30):
+        self.fps = fps
+
+    def estimate_pixels_per_meter(self, class_name, bbox_width, bbox_height):
+        if class_name not in OBJECT_REAL_SIZES:
+            return None
+        real = OBJECT_REAL_SIZES[class_name]
+        return max(bbox_width / real['width'], bbox_height / real['height'])
+
+    def calculate_speed_ms(self, pixel_velocity, pixels_per_meter):
+        if pixels_per_meter is None or pixels_per_meter <= 0:
+            return None
+        return (pixel_velocity / pixels_per_meter) * self.fps
+
+
+# =============================================================================
+# YOLOv8 + ByteTrack 检测追踪器
+# =============================================================================
 
 class YOLOv8ByteTrackDetector:
     """YOLOv8 + ByteTrack Integrated Detector/Tracker"""
@@ -58,7 +171,12 @@ class YOLOv8ByteTrackDetector:
             
         except Exception as e:
             print(f"[ERROR] Model loading failed: {e}")
-            sys.exit(1)
+            self.model = None
+            self.classes = []
+    
+    def is_available(self) -> bool:
+        """检查模型是否已成功加载"""
+        return self.model is not None
     
     def track_frame(self, frame, conf_threshold=0.25, tracker='bytetrack'):
         """
@@ -75,7 +193,6 @@ class YOLOv8ByteTrackDetector:
         self.frame_count += 1
         
         # ✅ 优先使用项目内的优化配置，提高ID稳定性
-        import os
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         custom_tracker = os.path.join(project_root, 'cfg', 'bytetrack_stable.yaml')
         
@@ -182,10 +299,13 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
     print("=" * 60)
     
     detector = YOLOv8ByteTrackDetector('yolov8n.pt')
-    
+    if not detector.is_available():
+        print("[ERROR] YOLOv8 model not available, aborting.")
+        return False
+
     print(f"[CONFIG] Confidence threshold: {conf_threshold}")
     print(f"[CONFIG] Tracker: {tracker}")
-    
+
     cap = cv2.VideoCapture(input_path)
     
     if not cap.isOpened():
@@ -193,9 +313,12 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
         return False
     
     fps = int(cap.get(cv2.CAP_PROP_FPS))
+    if fps <= 0:
+        fps = 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    speed_est = SpeedEstimator(fps)
     
     print("=" * 60)
     print("[VIDEO INFO]")
@@ -207,8 +330,7 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
     
     out = None
     if output_path:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = get_video_writer(output_path, fps, width, height)
     
     frame_count = 0
     csv_rows = []
@@ -254,7 +376,12 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                 
                 vx, vy = detector.get_pixel_velocity(track_id)
                 speed_px = np.sqrt(vx**2 + vy**2)
-                
+
+                # 真实世界速度估算（m/s）
+                px_per_m = speed_est.estimate_pixels_per_meter(class_name, w, h)
+                speed_ms = speed_est.calculate_speed_ms(speed_px, px_per_m)
+                speed_kmh = round(speed_ms * 3.6, 3) if speed_ms is not None else None
+
                 if output_path:
                     csv_rows.append({
                         'frame': frame_count,
@@ -263,11 +390,16 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                         'confidence': round(float(confidence), 4),
                         'x1': x, 'y1': y, 'x2': x + w, 'y2': y + h,
                         'pixel_speed_px_per_frame': round(float(speed_px), 3),
+                        'speed_ms': round(speed_ms, 3) if speed_ms is not None else None,
+                        'speed_kmh': speed_kmh,
                     })
                 
                 # ✅ 优化标签格式：更清晰易读
-                if speed_px > 0.5:
-                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f}) {speed_px:.1f}px/f"
+                if speed_ms is not None:
+                    label = (f"ID{track_id} {class_name} (conf:{confidence:.2f}) "
+                             f"{speed_px:.1f}px/f | {speed_ms:.1f}m/s")
+                elif speed_px > 0.5:
+                    label = f"ID{track_id} {class_name} (conf:{confidence:.2f}) {speed_px:.1f}px/f [pixel]"
                 else:
                     label = f"ID{track_id} {class_name} (conf:{confidence:.2f})"
                 
@@ -321,10 +453,20 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
     
     if output_path and csv_rows:
         csv_path = str(Path(output_path).with_suffix('.csv'))
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(csv_rows)
+        static_fields = [
+            'frame', 'track_id', 'class_name', 'confidence',
+            'x1', 'y1', 'x2', 'y2',
+            'pixel_speed_px_per_frame', 'speed_ms', 'speed_kmh',
+        ]
+        write_csv_with_header(
+            csv_path,
+            fieldnames=static_fields,
+            rows=csv_rows,
+            header_lines=[
+                "mode: 1 | algorithm: YOLOv8 + ByteTrack",
+                "unit: speed_ms = m/s (based on real object sizes, see OBJECT_REAL_SIZES); speed_kmh = km/h; pixel_speed_px_per_frame = pixels/frame",
+            ]
+        )
         print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n[OK] Processing complete, {frame_count} frames processed")
@@ -342,11 +484,11 @@ def main():
                         help='Tracker type: bytetrack or botsort (default: bytetrack)')
     
     args = parser.parse_args()
-    
+
     if not os.path.exists(args.input):
         print(f"[ERROR] Input file not found: {args.input}")
         return
-    
+
     success = process_video(
         input_path=args.input,
         output_path=args.output,

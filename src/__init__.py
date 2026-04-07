@@ -6,7 +6,6 @@
 
 __version__ = "2.0.0"
 __all__ = [
-    'config',
     'model_config',
     'main_opencv',
     'main_yolov8_native',

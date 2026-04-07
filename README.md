@@ -263,75 +263,114 @@ YOLOv8 物体检测 + ByteTrack 多目标追踪，追踪 ID 可视化，轨迹�
 
 ---
 
-## 三、安装与使用
+# 三、安装与使用
+
 ### 环境安装
-> **Web 端与 CLI 端共用以下环境部署方式。**
+
+> **CLI 端与 Web 端的**核心 AI/ML 依赖共用一套环境（CPU 或 GPU）。Web 端额外需要安装 `web/backend/requirements.txt`。
+
 #### CPU 版本
+
 **方式一：脚本一键安装（推荐）**
+
 ```bash
 # Windows
-scripts\cpu\install_cpu.bat
-# Linux/macOS
-bash scripts/cpu/install_cpu.sh
-方式二：手动安装
+scripts\cpu\install.bat
 
-pip install -r requirements.txt
-GPU 版本
+# Linux/macOS
+bash scripts/cpu/setup_and_test.py
+```
+
+**方式二：手动安装**
+
+```bash
+pip install -r scripts/cpu/requirements.txt
+```
+
+#### GPU 版本
+
 如需使用 GPU 加速，请先安装 CUDA 和 cuDNN。
 
-方式一：脚本一键安装（推荐）
+**方式一：脚本一键安装（推荐）**
 
+```bash
 # Windows
 scripts\gpu\install_gpu.bat
+
 # Linux/macOS
 bash scripts/gpu/install_gpu.sh
-方式二：手动安装
+```
 
-pip install -r requirements.txt
-# GPU 相关依赖已包含在 requirements.txt 中
-切换到 GPU 版本（如已安装 CPU 版本）
+**方式二：手动安装**
 
+```bash
+pip install -r scripts/gpu/requirements.txt
+# GPU 相关依赖已包含在 scripts/gpu/requirements.txt 中
+```
+
+**切换到 GPU 版本（如已安装 CPU 版本）**
+
+```bash
 # Windows
 scripts\gpu\switch_to_gpu.bat
+
 # Linux/macOS
 bash scripts/gpu/switch_to_gpu.sh
-使用介绍
-CLI 端
+```
+
+### 使用介绍
+
+#### CLI 端
+
 环境安装完成后，直接运行：
 
+```bash
 python main.py --input <视频路径> --output <输出路径>
+```
+
 详细参数说明请参见 main.py 使用指南。
 
-Web 端
+#### Web 端
+
 环境安装完成后，按以下步骤启动：
 
-1. 启动后端
+**1. 启动后端**
 
+```bash
 cd web/backend
 python app.py
-2. 启动前端
+```
 
+**2. 启动前端**
+
+```bash
 cd web/frontend
 npm install
 npm run dev
-3. 访问网页
+```
 
-打开浏览器访问 http://localhost:5173，使用账号登录使用。
+**3. 访问网页**
 
-配置说明
-配置项	说明	默认值
-model_name	使用的检测模型	yolov8n
-confidence_threshold	置信度阈值	0.25
-nms_threshold	NMS 阈值	0.45
-pixel_to_meter_ratio	像素到米的转换比例	0.1
+打开浏览器访问 http://localhost:3000 即可使用，无需登录。
+
+### 配置说明
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| model_name | 使用的检测模型 | yolov8n |
+| confidence_threshold | 置信度阈值 | 0.25 |
+| nms_threshold | NMS 阈值 | 0.45 |
+| pixel_to_meter_ratio | 像素到米的转换比例 | 0.1 |
+
 Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行参数传入。
 
-文档导航
-项目结构说明
-技术报告
-GPU 加速说明
-CLI 脚本说明
-Web 端说明
+### 文档导航
+
+- [项目结构说明](docs/PROJECT_STRUCTURE.md)
+- [技术报告](docs/TECHNICAL_REPORT.md)
+- [GPU 加速说明](scripts/gpu/README.md)
+- [CLI 脚本说明](scripts/README_SCRIPTS.md)
+- [Web 端说明](web/README.md)
 
 > 💡 **文档协作关系**：README.md → 概览入口；PROJECT_STRUCTURE.md → 详细结构；TECHNICAL_REPORT.md → 技术深度；web/README.md → Web 部署。
 
@@ -351,9 +390,8 @@ Web 端说明
 │       ├── uploads/           # Web 上传视频（后端自动创建）
 │       └── outputs/           # Web 处理结果（后端自动创建）
 │
-├── 📂 src/                    # 核心源代码（16 个 .py 文件）
+├── 📂 src/                    # 核心源代码（15 个 .py 文件）
 │   ├── __init__.py            # 模块初始化，导出所有核心接口
-│   ├── config.py              # 全局配置（阈值、路径、颜色等）
 │   ├── model_config.py        # 模型下载路径管理（必须最先 import）
 │   │
 │   ├── mode1_detection_tracking.py   # Mode 1: YOLOv8 检测 + ByteTrack 追踪

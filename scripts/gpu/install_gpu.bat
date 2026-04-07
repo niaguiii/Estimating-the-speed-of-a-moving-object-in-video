@@ -11,7 +11,7 @@ echo.
 echo 安装内容：
 echo   1. PyTorch 2.x + CUDA (GPU版本 - 会提示选择版本)
 echo      选项1: CUDA 12.8 适用于RTX 50系列 (5090, 5080等)
-echo      选项2: CUDA 11.8 适用于RTX 40系列及以下
+echo      选项2: CUDA 12.4 适用于RTX 40系列及以下
 echo   2. Torchvision + RAFT支持
 echo   3. Depth Anything V2依赖
 echo   4. YOLOv8 + ByteTrack
@@ -48,17 +48,17 @@ nvidia-smi --query-gpu=name --format=csv,noheader 2>nul
 echo.
 echo 重要提示：
 echo   - RTX 50系列 (5090, 5080等): 选择 1 (CUDA 12.8)
-echo   - RTX 40系列及以下 (4090, 3090等): 选择 2 (CUDA 11.8)
+echo   - RTX 40系列及以下 (4090, 3090等): 选择 2 (CUDA 12.4)
 echo.
-set /p cuda_choice="请选择CUDA版本 [1=CUDA 12.8, 2=CUDA 11.8]: "
+set /p cuda_choice="请选择CUDA版本 [1=CUDA 12.8, 2=CUDA 12.4]: "
 echo.
 
 if "%cuda_choice%"=="1" (
     echo 正在安装 PyTorch + CUDA 12.8 适用于RTX 50系列...
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ) else (
-    echo 正在安装 PyTorch + CUDA 11.8 适用于RTX 40系列及以下...
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+    echo 正在安装 PyTorch + CUDA 12.4 适用于RTX 40系列及以下...
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 )
 
 if errorlevel 1 (
@@ -99,9 +99,9 @@ echo ================================================================
 echo [验证] 检查GPU是否可用...
 echo ================================================================
 cd ..
-python check_gpu_status.py
+python test_project.py --mode gpu
 if errorlevel 1 (
-    echo ⚠️  警告：check_gpu_status.py不存在，手动验证GPU
+    echo ⚠️  警告：test_project.py 不存在，改为手动验证
     python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
 )
 cd gpu
@@ -115,7 +115,7 @@ echo 📋 已安装的核心组件：
 if "%cuda_choice%"=="1" (
     echo   ✅ PyTorch 2.x + CUDA 12.8 (RTX 50系列)
 ) else (
-    echo   ✅ PyTorch 2.x + CUDA 11.8 (RTX 40系列及以下)
+    echo   ✅ PyTorch 2.x + CUDA 12.4 (RTX 40系列及以下)
 )
 echo   ✅ Torchvision (RAFT光流)
 echo   ✅ Depth Anything V2
@@ -126,7 +126,7 @@ echo.
 echo 🚀 下一步：
 echo   1. 确认GPU可用（上面应该显示 CUDA: True）
 echo   2. 返回scripts目录: cd ..
-echo   3. 运行测试: python test_dependencies.py
+echo   3. 运行测试: python test_project.py --mode gpu && python test_project.py --mode deps
 echo   4. 返回根目录开始处理: cd .. ^&^& python main.py
 echo.
 echo ================================================================

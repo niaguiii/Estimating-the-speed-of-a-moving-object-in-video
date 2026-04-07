@@ -29,6 +29,32 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
+from enhance_video import get_video_writer
+
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    """
+    写入带头部注释的 CSV 文件。
+
+    Args:
+        csv_path:     CSV 文件路径
+        fieldnames:   列名列表
+        rows:         数据行列表
+        header_lines: 每行一个注释字符串
+    """
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
 
 
 # Standard object sizes in meters (width, height)
@@ -172,14 +198,18 @@ class YOLOv8SpeedDetector:
             
         except Exception as e:
             print(f"[ERROR] Model loading failed: {e}")
-            sys.exit(1)
+            self.model = None
+            self.classes = []
+    
+    def is_available(self) -> bool:
+        """检查模型是否已成功加载"""
+        return self.model is not None
     
     def track_frame(self, frame, conf_threshold=0.25, tracker='bytetrack'):
         """Detect, track, and estimate speed"""
         self.frame_count += 1
         
         # ✅ 优先使用项目内的优化配置，提高ID稳定性
-        import os
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         custom_tracker = os.path.join(project_root, 'cfg', 'bytetrack_stable.yaml')
         
@@ -381,11 +411,14 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
     
     # Initialize detector with correct FPS
     detector = YOLOv8SpeedDetector('yolov8n.pt', fps=fps)
-    
+    if not detector.is_available():
+        print("[ERROR] YOLOv8 model not available, aborting.")
+        cap.release()
+        return False
+
     out = None
     if output_path:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = get_video_writer(output_path, fps, width, height)
     
     frame_count = 0
     csv_rows = []
@@ -528,10 +561,16 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
     
     if output_path and csv_rows:
         csv_path = str(Path(output_path).with_suffix('.csv'))
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(csv_rows)
+        write_csv_with_header(
+            csv_path,
+            fieldnames=list(csv_rows[0].keys()),
+            rows=csv_rows,
+            header_lines=[
+                "mode: 2 | algorithm: YOLOv8 + ByteTrack + Object-Size Speed Calibration",
+                "unit: speed_ms = m/s (meters/second), speed_kmh = km/h",
+                "⚠️  speed is estimated by calibrating pixel-size of each object class against real-world average sizes",
+            ]
+        )
         print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n[OK] Processing complete, {frame_count} frames processed")

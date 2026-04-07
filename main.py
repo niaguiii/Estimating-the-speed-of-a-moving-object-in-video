@@ -312,8 +312,9 @@ def main():
             print("  1. 检测报告（仅显示，不处理）")
             print("  2. 自动处理（处理全部检测到的问题）")
             print("  3. 手动选择：")
+            ego_note = " (⚠️ EgoSpeed 不适用)" if model_version == 'ego' else ""
             issue_labels = {
-                'blur': '3a. 去模糊 (Wiener反卷积)',
+                'blur': f'3a. 去模糊 (Wiener反卷积){ego_note}',
                 'haze': '3b. 去雾 (DCP暗通道先验)',
                 'brightness': '3c. 提亮 (CLAHE+Gamma)',
             }
@@ -326,6 +327,8 @@ def main():
             elif choice == '2':
                 enhancement_options = report.issues
                 print(f"\n  [自动增强] 将处理: {', '.join(enhancement_options)}")
+                if model_version == 'ego' and 'blur' in enhancement_options:
+                    print("  ⚠️  注意：EgoSpeed 模式下去模糊可能影响光流精度，效果由用户自行判断")
             elif choice == '3':
                 selected = []
                 valid_keys = {'a': 'blur', 'b': 'haze', 'c': 'brightness'}
@@ -336,6 +339,8 @@ def main():
                 enhancement_options = selected
                 if enhancement_options:
                     print(f"  [手动选择] 将处理: {', '.join(enhancement_options)}")
+                    if model_version == 'ego' and 'blur' in enhancement_options:
+                        print("  ⚠️  注意：EgoSpeed 模式下去模糊可能影响光流精度，效果由用户自行判断")
                 else:
                     print("  [无选择] 跳过预处理")
             else:
@@ -393,7 +398,6 @@ def main():
         try:
             from src.quality_detector import detect_video_quality
             from src.enhance_video import enhance_video
-            from src.quality_detector import QualityReport
 
             report = detect_video_quality(selected_video)
             # 中间增强文件路径（临时）
@@ -571,7 +575,7 @@ def main():
                 try:
                     import subprocess
                     subprocess.run(['explorer', 'data\\cli\\output'], check=True)
-                except:
+                except OSError:
                     print("Please open data/cli/output/ folder manually")
         else:
             print("\n[ERROR] Processing failed")

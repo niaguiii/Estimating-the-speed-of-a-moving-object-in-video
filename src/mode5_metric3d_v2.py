@@ -21,6 +21,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import deque, defaultdict
 
+from enhance_video import get_video_writer
+
 # ⚠️ 必须先导入model_config设置环境变量
 try:
     from . import model_config
@@ -36,6 +38,22 @@ try:
 except ImportError:
     from optical_flow_raft import RAFTOpticalFlow
     from depth_estimation_metric3d import Metric3Dv2
+
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
 
 
 class Metric3DSpeedEstimator:
@@ -203,18 +221,29 @@ def process_video_metric3d(input_path: str, output_path: str,
     
     # 1. 初始化YOLOv8
     print("\n[1/4] Loading YOLOv8...")
-    yolo_path = model_config.get_model_path('yolov8n.pt')
-    model = YOLO(yolo_path)
-    print(f"✅ YOLOv8 loaded from {yolo_path}")
+    try:
+        yolo_path = model_config.get_model_path('yolov8n.pt')
+        model = YOLO(yolo_path)
+        _ = model.names
+        print(f"✅ YOLOv8 loaded from {yolo_path}")
+    except Exception as e:
+        print(f"[ERROR] YOLO model loading failed: {e}")
+        return False
     
     # 2. 初始化RAFT
     print("\n[2/4] Loading RAFT...")
     raft = RAFTOpticalFlow(model_type='small', device='auto')
+    if not raft.is_available():
+        print("[ERROR] RAFT model not available, aborting.")
+        return False
     print("✅ RAFT loaded")
     
     # 3. 初始化Metric3D v2
     print("\n[3/4] Loading Metric3D v2...")
     depth_estimator = Metric3Dv2(model_size=model_size, device='auto')
+    if not depth_estimator.is_available():
+        print("[ERROR] Metric3D v2 not available, aborting.")
+        return False
     print("✅ Metric3D v2 loaded")
     
     # 4. 打开视频
@@ -242,8 +271,7 @@ def process_video_metric3d(input_path: str, output_path: str,
     run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     _op = Path(output_path)
     output_path = str(_op.with_name(_op.stem + '_' + run_ts + _op.suffix))
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = get_video_writer(output_path, fps, width, height)
     
     # 6. 初始化估计器
     speed_estimator = Metric3DSpeedEstimator(fps=fps)
@@ -343,6 +371,7 @@ def process_video_metric3d(input_path: str, output_path: str,
                     'camera_dy': round(float(camera_motion[1]), 3),
                     'depth_meters': round(float(smooth_depth), 3),
                     'speed_ms': round(float(speed), 3),
+                    'speed_kmh': round(float(speed * 3.6), 3),
                 })
                 
                 # 绘制边界框（颜色根据深度）
@@ -419,10 +448,16 @@ def process_video_metric3d(input_path: str, output_path: str,
 
         # ── CSV 1: 逐帧数据（每行=一帧×一辆车）──────────────────
         frames_csv_path = base_csv + '_frames.csv'
-        with open(frames_csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(csv_rows)
+        write_csv_with_header(
+            frames_csv_path,
+            fieldnames=list(csv_rows[0].keys()),
+            rows=csv_rows,
+            header_lines=[
+                "mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)",
+                "unit: speed_ms = m/s, speed_kmh = km/h; depth_meters = absolute depth from Metric3D v2 (meters)",
+                "camera_dx/dy: camera motion (pixels/frame); speed: object speed after motion compensation (m/s)",
+            ]
+        )
         print(f"[CSV] Per-frame: {frames_csv_path} ({len(csv_rows)} rows)")
 
         # ── CSV 2: 按车辆汇总（每行=一辆车的统计）────────────────
@@ -430,30 +465,40 @@ def process_video_metric3d(input_path: str, output_path: str,
         for row in csv_rows:
             vehicle_data[row['track_id']].append(row)
 
+        MOVING_THRESHOLD_MS = 0.5  # m/s：行走阈值（行人约1m/s）
         object_rows = []
         for tid, rows in sorted(vehicle_data.items()):
-            moving = [r for r in rows if r['speed_ms'] > 0.28]
-            speeds_ms = [r['speed_ms'] for r in moving] if moving else [0.0]
+            moving = [r for r in rows if r['speed_ms'] > MOVING_THRESHOLD_MS]
+            speeds_ms = [r['speed_ms'] for r in moving] if moving else []
             depths = [r['depth_meters'] for r in rows if r['depth_meters'] > 0]
+            avg_speed = round(sum(speeds_ms) / len(speeds_ms), 3) if speeds_ms else None
+            max_speed = round(max(speeds_ms), 3) if speeds_ms else None
+            min_speed = round(min(speeds_ms), 3) if speeds_ms else None
             object_rows.append({
                 'track_id': tid,
                 'class_name': rows[0]['class_name'],
                 'first_time_s': round((rows[0]['frame'] - 1) / fps, 2),
                 'last_time_s': round((rows[-1]['frame'] - 1) / fps, 2),
                 'duration_s': round((rows[-1]['frame'] - rows[0]['frame'] + 1) / fps, 2),
-                'avg_speed_ms': round(sum(speeds_ms) / len(speeds_ms), 3),
-                'max_speed_ms': round(max(speeds_ms), 3),
-                'min_speed_ms': round(min(speeds_ms), 3),
+                'avg_speed_ms': avg_speed,
+                'max_speed_ms': max_speed,
+                'min_speed_ms': min_speed,
                 'avg_depth_m': round(sum(depths) / len(depths), 2) if depths else 0.0,
-                'status': 'moving' if max(speeds_ms) > 0.56 else 'slow/stationary',
+                'status': 'moving' if speeds_ms and max(speeds_ms) > MOVING_THRESHOLD_MS else 'unknown',
                 'first_crop_path': first_crop_paths.get(tid, ''),
             })
 
         objects_csv_path = base_csv + '_objects.csv'
-        with open(objects_csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=object_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(object_rows)
+        write_csv_with_header(
+            objects_csv_path,
+            fieldnames=list(object_rows[0].keys()),
+            rows=object_rows,
+            header_lines=[
+                "mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)",
+                "unit: avg_speed_ms = m/s (avg of moving frames); avg_depth_m = meters",
+                "status: moving if max_speed_ms > 0.5 m/s (~1.8 km/h), else unknown (no detected motion)",
+            ]
+        )
         print(f"[CSV] Per-object: {objects_csv_path} ({len(object_rows)} objects)")
     
     print(f"\n{'=' * 60}")

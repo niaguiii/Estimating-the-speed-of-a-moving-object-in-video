@@ -1,0 +1,21 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "D:\\program\\Estimating-the-speed-of-a-moving-object-in-video\\web\\frontend\\datasets",
+  "weights_dir": "weights",
+  "runs_dir": "runs",
+  "uuid": "34fdcd64ab948cafccca6d1b8cdcfe8fc0ea65d48458c1f17fab4017713c55be",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

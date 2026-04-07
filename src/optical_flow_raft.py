@@ -43,19 +43,29 @@ class RAFTOpticalFlow:
             self.device = torch.device(device)
         
         print(f"[RAFT] Initializing RAFT_{model_type.upper()} on {self.device}")
-        
-        # 加载RAFT模型
-        if model_type == 'small':
-            weights = flow_models.Raft_Small_Weights.DEFAULT
-            self.model = flow_models.raft_small(weights=weights, progress=True)
-        else:
-            weights = flow_models.Raft_Large_Weights.DEFAULT
-            self.model = flow_models.raft_large(weights=weights, progress=True)
-        
-        self.model = self.model.to(self.device)
-        self.model.eval()
-        
-        print(f"[RAFT] Model loaded successfully")
+
+        try:
+            if model_type == 'small':
+                weights = flow_models.Raft_Small_Weights.DEFAULT
+                self.model = flow_models.raft_small(weights=weights, progress=True)
+            else:
+                weights = flow_models.Raft_Large_Weights.DEFAULT
+                self.model = flow_models.raft_large(weights=weights, progress=True)
+
+            self.model = self.model.to(self.device)
+            self.model.eval()
+            self._available = True
+        except Exception as e:
+            print(f"[RAFT] Model loading failed: {e}")
+            self.model = None
+            self._available = False
+
+        if self._available:
+            print(f"[RAFT] Model loaded successfully")
+    
+    def is_available(self) -> bool:
+        """检查 RAFT 模型是否已成功加载"""
+        return getattr(self, '_available', False)
     
     def preprocess_frame(self, frame: np.ndarray) -> torch.Tensor:
         """
@@ -81,14 +91,16 @@ class RAFTOpticalFlow:
     def compute_flow(self, frame1: np.ndarray, frame2: np.ndarray) -> np.ndarray:
         """
         计算两帧之间的光流
-        
+
         Args:
             frame1: 前一帧 (H, W, 3) BGR
             frame2: 当前帧 (H, W, 3) BGR
-            
+
         Returns:
             flow: 光流场 (H, W, 2) 其中flow[:,:,0]是x方向，flow[:,:,1]是y方向
         """
+        if not self.is_available():
+            raise RuntimeError("RAFT model not available")
         orig_h, orig_w = frame1.shape[:2]
         
         # RAFT要求宽高都能被8整除，不足则pad

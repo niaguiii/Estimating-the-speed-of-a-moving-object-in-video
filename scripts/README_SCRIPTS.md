@@ -112,8 +112,8 @@ chmod +x switch_to_gpu.sh
 根据检查，你的CPU环境已完全就绪：
 
 ```
-✅ PyTorch 2.9.1+cpu - 已安装
-✅ Torchvision 0.24.1+cpu - 已安装
+✅ PyTorch 2.6.0+cpu - 已安装
+✅ Torchvision 0.19.0+cpu - 已安装
 ✅ RAFT支持 - 可用
 ✅ Depth Anything V2 - 可用
 ✅ YOLOv8 + ByteTrack - 可用
@@ -267,9 +267,12 @@ python scripts/check_project.py --mode all
 
 **支持的检查模式:**
 - `basic` - 基本结构检查
-- `phase1-2` - Phase 1 & 2 检查
-- `phase3` - Phase 3 快速检查（默认）
-- `full` - 完整检查（包括导入测试）
+- `core` - 核心模块检查（对应Phase 1 & 2）
+- `web` - Web模块检查
+- `scripts` - 脚本文件检查
+- `models` - 模型文件检查
+- `docs` - 文档文件检查
+- `full` - 完整检查（包括导入测试，对应Phase 3）
 - `all` - 所有检查
 
 **检查内容:**
@@ -349,7 +352,7 @@ python main.py
 2. ✅ 运行 `cd scripts/gpu && install_gpu.sh`
 3. ✅ 等待15-30分钟
 4. ✅ 验证：`python scripts/test_project.py --mode gpu`
-4. ✅ 验证GPU可用
-5. ✅ 开始处理视频！
+5. ✅ 验证GPU可用
+6. ✅ 开始处理视频！
 
 **就这么简单！** 🎉

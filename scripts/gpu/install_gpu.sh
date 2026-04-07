@@ -49,9 +49,9 @@ nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1
 echo ""
 echo "IMPORTANT: "
 echo "  - RTX 50 series (5090, 5080, etc.): Use CUDA 12.8"
-echo "  - RTX 40 series and below: Use CUDA 11.8"
+echo "  - RTX 40 series and below: Use CUDA 12.4"
 echo ""
-read -p "Choose CUDA version - Enter 1 for CUDA 12.8 (RTX 50), 2 for CUDA 11.8 (RTX 40 and below) [1/2]: " cuda_choice
+read -p "Choose CUDA version - Enter 1 for CUDA 12.8 (RTX 50), 2 for CUDA 12.4 (RTX 40 and below) [1/2]: " cuda_choice
 echo ""
 
 if [ "$cuda_choice" = "1" ]; then
@@ -59,9 +59,9 @@ if [ "$cuda_choice" = "1" ]; then
     pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128 || \
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 else
-    echo "Installing PyTorch with CUDA 11.8 (for RTX 40 series and below)..."
-    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118 || \
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+    echo "Installing PyTorch with CUDA 12.4 (for RTX 40 series and below)..."
+    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu124 || \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 fi
 if [ $? -ne 0 ]; then
     echo "❌ PyTorch installation failed. Check network connection."
@@ -102,10 +102,10 @@ echo "================================================================"
 echo "[Verification] Checking GPU availability..."
 echo "================================================================"
 cd ..
-if [ -f "check_gpu_status.py" ]; then
-    python3 check_gpu_status.py || python check_gpu_status.py
+if [ -f "../test_project.py" ]; then
+    python3 ../test_project.py --mode gpu || python ../test_project.py --mode gpu
 else
-    echo "⚠️  Warning: check_gpu_status.py not found, manual verification"
+    echo "⚠️  Warning: test_project.py not found, manual verification"
     python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')" || \
     python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
 fi
@@ -117,7 +117,7 @@ echo "✅ GPU Environment Installation Complete!"
 echo "================================================================"
 echo ""
 echo "📋 Installed components:"
-echo "  ✅ PyTorch 2.x + CUDA 11.8"
+echo "  ✅ PyTorch 2.x + CUDA (see above for version)"
 echo "  ✅ Torchvision (RAFT optical flow)"
 echo "  ✅ Depth Anything V2"
 echo "  ✅ Metric3D v2 (mmengine + mmcv + scipy + einops)"
@@ -127,7 +127,7 @@ echo ""
 echo "🚀 Next steps:"
 echo "  1. Confirm GPU is available (should see CUDA: True above)"
 echo "  2. Return to scripts: cd .."
-echo "  3. Run test: python test_dependencies.py"
+echo "  3. Run test: python ../test_project.py --mode gpu && python ../test_project.py --mode deps"
 echo "  4. Return to root and start: cd .. && python main.py"
 echo ""
 echo "================================================================"

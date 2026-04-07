@@ -26,6 +26,7 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
+from enhance_video import get_video_writer
 
 # 兼容相对导入和绝对导入
 try:
@@ -34,6 +35,22 @@ try:
 except ImportError:
     from optical_flow_raft import RAFTOpticalFlow
     from depth_estimation import DepthAnythingV2
+
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
 
 
 # Standard object sizes in meters (width, height)
@@ -174,27 +191,15 @@ class Phase3SpeedEstimator:
         self.depth_history[track_id].append(depth_value)
         if len(self.depth_history[track_id]) > 30:
             self.depth_history[track_id].pop(0)
-        
+
         # 真实运动（已由RAFT补偿）
         dx_pixel, dy_pixel = real_motion
-        
+
         # 计算运动距离（像素）
         distance_pixel = np.sqrt(dx_pixel**2 + dy_pixel**2)
-        
-        # 改进的深度动态修正
-        if len(self.depth_history[track_id]) >= 2:
-            depth_change = self.depth_history[track_id][-1] - self.depth_history[track_id][-2]
-            # 深度变化修正（考虑Z轴运动）
-            # depth_change > 0: 远离（Z增加）
-            # depth_change < 0: 靠近（Z减少）
-            # 修正系数从经验值改为基于深度变化的合理估算
-            z_motion_factor = abs(depth_change) * 0.2  # 降低影响，从0.3改为0.2
-            if depth_change > 0:  # 远离
-                distance_pixel *= (1.0 + z_motion_factor)
-            else:  # 靠近
-                distance_pixel *= (1.0 - z_motion_factor)
-        
-        # 转换为米
+
+        # 转换为米（ppm 已在 estimate_pixel_to_meter_with_depth 中做过深度修正，
+        # 与 estimate_pixel_to_meter 的逻辑保持一致，避免双重修正）
         distance_meter = distance_pixel / ppm
         
         # 计算速度（米/秒）
@@ -231,19 +236,32 @@ def process_video_phase3(input_path: str, output_path: str,
     
     # 1. 初始化YOLOv8
     print("\n[1/4] Loading YOLOv8...")
-    yolo_path = model_config.get_model_path('yolov8n.pt')
-    model = YOLO(yolo_path)
-    print(f"✅ YOLOv8 loaded from {yolo_path}")
+    try:
+        yolo_path = model_config.get_model_path('yolov8n.pt')
+        model = YOLO(yolo_path)
+        _ = model.names
+        print(f"✅ YOLOv8 loaded from {yolo_path}")
+    except Exception as e:
+        print(f"[ERROR] YOLO model loading failed: {e}")
+        return False
     
     # 2. 初始化RAFT
     print("\n[2/4] Loading RAFT...")
     raft = RAFTOpticalFlow(model_type='small', device='auto')
+    if not raft.is_available():
+        print("[ERROR] RAFT model not available, aborting.")
+        return False
     print("✅ RAFT loaded")
     
     # 3. 初始化Depth Anything V2
     print("\n[3/4] Loading Depth Anything V2...")
-    depth_estimator = DepthAnythingV2(model_size='small', device='auto')
-    print("✅ Depth Anything V2 loaded")
+    try:
+        depth_estimator = DepthAnythingV2(model_size='small', device='auto')
+        _ = depth_estimator.model  # 触发加载，失败抛异常
+        print("✅ Depth Anything V2 loaded")
+    except Exception as e:
+        print(f"[ERROR] Depth Anything V2 loading failed: {e}")
+        return False
     
     # 4. 打开视频
     print("\n[4/4] Opening video...")
@@ -258,10 +276,9 @@ def process_video_phase3(input_path: str, output_path: str,
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"✅ Video: {width}x{height} @ {fps}FPS, {total_frames} frames")
-    
+
     # 5. 初始化输出
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = get_video_writer(output_path, fps, width, height)
     
     # 6. 初始化估计器
     speed_estimator = Phase3SpeedEstimator(fps=fps)
@@ -328,10 +345,11 @@ def process_video_phase3(input_path: str, output_path: str,
                 speed = 0.0
                 real_dx = 0.0  # ✅ 初始化，避免后面使用时未定义
                 real_dy = 0.0
+                prev_pos = track_positions.get(track_id)  # 保存引用用于显示像素速度
                 
                 if class_name in OBJECT_REAL_SIZES:
-                    if track_id in track_positions:
-                        prev_cx, prev_cy = track_positions[track_id]
+                    if prev_pos is not None:
+                        prev_cx, prev_cy = prev_pos
                         apparent_dx = cx - prev_cx
                         apparent_dy = cy - prev_cy
                         
@@ -366,8 +384,8 @@ def process_video_phase3(input_path: str, output_path: str,
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
                 # ✅ 优化标签格式：显示置信度+像素速度+深度+真实速度
-                # 计算像素速度
-                pixel_speed = np.sqrt(real_dx**2 + real_dy**2) if track_id in track_positions else 0
+                # 计算像素速度（使用保存的 prev_pos 引用）
+                pixel_speed = np.sqrt(real_dx**2 + real_dy**2) if prev_pos is not None else 0
                 
                 if speed > 0:
                     label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {speed:.1f}m/s | D:{depth_normalized:.2f}"
@@ -417,12 +435,18 @@ def process_video_phase3(input_path: str, output_path: str,
     if show_video:
         cv2.destroyAllWindows()
     
-    if csv_rows:
+    if csv_rows and output_path:
         csv_path = str(Path(output_path).with_suffix('.csv'))
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(csv_rows)
+        write_csv_with_header(
+            csv_path,
+            fieldnames=list(csv_rows[0].keys()),
+            rows=csv_rows,
+            header_lines=[
+                "mode: 4 | algorithm: YOLOv8 + ByteTrack + RAFT + Depth Anything V2",
+                "unit: speed_ms = m/s, speed_kmh = km/h; depth_normalized = relative depth [0=far, 1=near]",
+                "camera_dx/dy: camera motion (pixels/frame); speed: object speed after motion compensation",
+            ]
+        )
         print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n{'=' * 60}")

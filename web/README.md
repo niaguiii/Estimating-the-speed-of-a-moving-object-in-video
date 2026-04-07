@@ -143,7 +143,7 @@ web/
     ↓ 调用处理模块
 主项目 (../src/*.py)
     ↓ 输出结果
-backend/outputs/{task_id}_output.mp4
+`data/web/outputs/{task_id}_output.mp4`
 ```
 
 ---
@@ -286,7 +286,7 @@ kill -9 <进程ID>
 **答：** 检查：
 - 视频格式（MP4、AVI、MOV）
 - 视频文件未损坏
-- `backend/uploads/` 有足够的磁盘空间
+- `data/web/uploads/` 有足够的磁盘空间
 
 ### 问：处理失败？
 **答：** 查看后端控制台错误信息：
@@ -411,5 +411,5 @@ Vue.createApp({
 ---
 
 **版本：** 1.0  
-**最后更新：** 2026-01-05  
+**最后更新：** 2026-04-02  
 **测试环境：** Windows 10/11, Python 3.8+

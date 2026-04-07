@@ -12,7 +12,7 @@
 import cv2
 import numpy as np
 from dataclasses import dataclass, asdict
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 
 # =============================================================================
@@ -43,6 +43,18 @@ class QualityReport:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "QualityReport":
+        """从字典恢复 QualityReport 对象（用于缓存重建）"""
+        known_fields = {
+            'blur_index', 'haze_index', 'brightness_index',
+            'blur_level', 'haze_level', 'brightness_level',
+            'needs_enhancement', 'issues',
+            'sampled_frames', 'total_frames', 'video_path',
+        }
+        filtered = {k: v for k, v in d.items() if k in known_fields}
+        return cls(**filtered)
 
 
 # =============================================================================
@@ -149,10 +161,12 @@ def detect_blur(frames: List[np.ndarray]) -> Tuple[float, str]:
     # 取中位数，抑制异常帧（如黑帧、过渡帧）
     blur_index = float(np.median(variances))
 
-    # 阈值（基于经验值，参考学术文献常用范围）
-    if blur_index < 80:
+    # 阈值（基于经验值，针对典型视频场景放宽，减少误判）
+    # 注意：模糊检测对背景虚化、浅景深敏感，普通视频 Laplacian 在 50-500 范围很宽
+    # 用百分位数更稳健：低于 25% 分位数才判为模糊
+    if blur_index < 50:
         blur_level = "blur"
-    elif blur_index < 350:
+    elif blur_index < 100:
         blur_level = "moderate"
     else:
         blur_level = "clear"
@@ -160,7 +174,7 @@ def detect_blur(frames: List[np.ndarray]) -> Tuple[float, str]:
     return blur_index, blur_level
 
 
-def detect_haze(frames: List[np.ndarray], original_frames: Optional[List[np.ndarray]] = None) -> Tuple[float, str]:
+def detect_haze(frames: List[np.ndarray]) -> Tuple[float, str]:
     """
     雾浓度检测 — 暗通道先验 (DCP)
 
@@ -197,10 +211,12 @@ def detect_haze(frames: List[np.ndarray], original_frames: Optional[List[np.ndar
 
     haze_index = float(np.median(dark_vals))
 
-    # 阈值（基于 DCP 论文的经验值）
-    if haze_index > 60:
+    # 阈值（收紧 — 暗通道先验极易被阴影、深色场景、阴天误触发，
+    # 大幅提高门槛，只在雾霾极明显时才判为 foggy，避免误增强正常视频）
+    # 典型值参考：晴朗户外 < 40，阴天/阴影 40-80，轻雾 80-120，明显雾霾 > 120
+    if haze_index > 120:
         haze_level = "foggy"
-    elif haze_index > 35:
+    elif haze_index > 80:
         haze_level = "mild"
     else:
         haze_level = "clear"
@@ -251,16 +267,25 @@ def detect_brightness(frames: List[np.ndarray]) -> Tuple[float, str]:
     dark_ratio = float(np.median(dark_ratios))
     bright_ratio = float(np.median(bright_ratios))
 
-    # 亮度指数 = 均值归一化 × 0.6 + 非暗部占比 × 0.4
+    # 亮度指数：结合均值和非极端像素占比，更全面反映画面亮度
+    # 公式：均值贡献60% + 非极端像素占比贡献40%
+    # mean_brightness: 整帧均值，反映整体明暗
+    # dark_ratio: <30 的暗部占比，过大说明大面积欠曝
+    # bright_ratio: >225 的亮部占比，过大说明过曝
     brightness_index = (mean_brightness / 255.0) * 0.6 + (1.0 - dark_ratio) * 0.4
 
-    if bright_ratio > 0.15:
-        # 过曝优先检测
+    if bright_ratio > 0.20:
+        # 过曝优先检测（亮部超过20%）
         brightness_level = "overexposed"
-    elif brightness_index < 0.30:
+    elif mean_brightness < 45:
+        # 均值低于45（整体明显偏暗）
         brightness_level = "dark"
-    elif brightness_index > 0.75:
+    elif mean_brightness > 220:
+        # 均值高于220（整体过亮）
         brightness_level = "overexposed"
+    elif dark_ratio > 0.60 and brightness_index < 0.30:
+        # 非极端阈值：暗部超过60% 且 综合指数低于0.30
+        brightness_level = "dark"
     else:
         brightness_level = "normal"
 
@@ -339,18 +364,18 @@ def detect_video_quality(video_path: str,
 
     # 2. 雾浓度检测（原始BGR帧）
     dark_channel_frames = [compute_dark_channel(f) for f in original_frames]
-    haze_index, haze_level = detect_haze(dark_channel_frames, original_frames)
+    haze_index, haze_level = detect_haze(dark_channel_frames)
 
     # 3. 亮度检测（灰度帧）
     brightness_index, brightness_level = detect_brightness(frames)
 
-    # 汇总问题
+    # 汇总问题（仅中度及以上才建议增强，避免过度处理正常视频）
     issues = []
-    if blur_level != "clear":
+    if blur_level == "blur":         # 仅严重模糊才增强
         issues.append("blur")
-    if haze_level != "clear":
+    if haze_level == "foggy":        # 仅明显雾霾才增强
         issues.append("haze")
-    if brightness_level != "normal":
+    if brightness_level in ("dark", "overexposed"):  # 明显亮度异常才增强
         issues.append("brightness")
 
     needs_enhancement = len(issues) > 0

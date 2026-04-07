@@ -50,7 +50,6 @@ def check_core_modules():
     files = [
         ("main.py", "主程序入口"),
         ("src/__init__.py", "模块初始化"),
-        ("src/config.py", "配置文件"),
         ("src/model_config.py", "模型配置"),
         ("src/mode1_detection_tracking.py", "Mode 1: 检测+追踪"),
         ("src/mode2_speed_estimation.py", "Mode 2: 速度估算"),
@@ -207,7 +206,6 @@ def test_imports():
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
     
     modules_to_test = [
-        ("config", "配置文件"),
         ("model_config", "模型配置"),
         ("quality_detector", "质量检测"),
         ("enhance_video", "视频增强"),

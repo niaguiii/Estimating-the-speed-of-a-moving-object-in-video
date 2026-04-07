@@ -17,9 +17,9 @@ nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1
 echo ""
 echo "IMPORTANT:"
 echo "  - RTX 50 series (5090, 5080, etc.): Choose 1 (CUDA 12.8)"
-echo "  - RTX 40 series and below: Choose 2 (CUDA 11.8)"
+echo "  - RTX 40 series and below: Choose 2 (CUDA 12.4)"
 echo ""
-read -p "Choose CUDA version [1=12.8, 2=11.8]: " cuda_choice
+read -p "Choose CUDA version [1=12.8, 2=12.4]: " cuda_choice
 echo ""
 
 echo ""
@@ -32,8 +32,8 @@ if [ "$cuda_choice" = "1" ]; then
     echo "Installing PyTorch with CUDA 12.8 (for RTX 50 series)..."
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 else
-    echo "Installing PyTorch with CUDA 11.8 (for RTX 40 series and below)..."
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+    echo "Installing PyTorch with CUDA 12.4 (for RTX 40 series and below)..."
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 fi
 
 echo ""
@@ -43,7 +43,7 @@ pip install mmengine>=0.7.0 mmcv>=2.0.0 scipy>=1.7.0 einops>=0.6.0
 echo ""
 echo "[4/4] Verifying GPU support..."
 cd ..
-python3 check_gpu_status.py || python check_gpu_status.py
+python3 ../test_project.py --mode gpu || python ../test_project.py --mode gpu
 cd gpu
 
 echo ""

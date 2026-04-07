@@ -14,13 +14,36 @@ import cv2
 import csv
 import numpy as np
 from pathlib import Path
-from collections import deque
+from collections import deque, defaultdict
 from datetime import datetime
 
+from enhance_video import get_video_writer
+
+# ⚠️ 必须先导入model_config设置环境变量
+try:
+    from . import model_config
+except ImportError:
+    import model_config
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import src.model_config as model_config
 from src.optical_flow_raft import RAFTOpticalFlow
 from src.depth_estimation_metric3d import Metric3Dv2
+
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
 
 
 class EgoSpeedEstimator:
@@ -73,13 +96,14 @@ class EgoSpeedEstimator:
         chosen = valid_idx[np.random.choice(len(valid_idx), n, replace=False)]
         rows, cols = chosen[:, 0], chosen[:, 1]
 
-        dy = road_flow[rows, cols, 1]   # 竖直分量：前进>0，倒车<0；转弯不影响 dy
+        dy = road_flow[rows, cols, 1]   # 竖直分量：前进<0（光流向上），倒车>0；转弯不影响 dy
         z  = road_depth[rows, cols]
 
         self.last_road_avg_depth = float(np.mean(z))
 
         # 仅用前向分量（dy）；忽略 dx 避免转弯时横向光流虚增速度
-        forward_speeds = (dy * z / self.fy) * self.fps  # 有符号：前进正，倒车负
+        # dy<0（前进）→ forward_speeds>0；dy>0（倒车）→ forward_speeds<0
+        forward_speeds = (-dy * z / self.fy) * self.fps
 
         valid_s = np.abs(forward_speeds) < 55.6  # abs < 200 km/h
         if valid_s.sum() < 5:
@@ -109,7 +133,7 @@ class EgoSpeedEstimator:
         return self.current_speed_ms
 
     def get_display_speed_ms(self):
-        """\u7a33\u5b9a\u663e\u793a\u901f\u5ea6\uff1a\u51b7\u542f\u52a8\u6291\u5236 + \u6bcfN\u5e27\u66f4\u65b0\u4e00\u6b21\uff0c\u51cf\u5c11\u6570\u5b57\u8df3\u52a8"""
+        """稳定显示速度：冷启动抑制 + 每N帧更新一次，减少数字跳动"""
         if self.frame_count < self.display_delay:
             return 0.0
         return self.display_speed_ms
@@ -125,9 +149,16 @@ def _draw_panel(frame, speed_ms, speed_history, frame_idx, road_y):
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
     cv2.putText(frame, "EGO VEHICLE SPEED", (20, 38),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
-    color = (0, 255, 80) if abs_kmh < 60 else (0, 165, 255) if abs_kmh < 100 else (0, 60, 255)
-    cv2.putText(frame, f"{speed_kmh:+6.1f} km/h", (20, 95),
-                cv2.FONT_HERSHEY_DUPLEX, 1.6, color, 2)
+
+    # 倒车时（speed_ms < 0）：红色显示 + REVERSE 标识
+    if speed_kmh < 0:
+        color = (0, 60, 255)  # 红色系
+        cv2.putText(frame, f"{speed_kmh:+6.1f} km/h  [REVERSE]", (20, 95),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.4, color, 2)
+    else:
+        color = (0, 255, 80) if abs_kmh < 60 else (0, 165, 255) if abs_kmh < 100 else (0, 60, 255)
+        cv2.putText(frame, f"{speed_kmh:+6.1f} km/h", (20, 95),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.6, color, 2)
     cv2.putText(frame, f"{speed_ms:+.2f} m/s", (20, 122),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1)
 
@@ -158,7 +189,8 @@ def _draw_panel(frame, speed_ms, speed_history, frame_idx, road_y):
 
 def process_video_ego_speed(input_path, output_path, show_video=True,
                              fov_degrees=70.0, depth_frequency=5,
-                             road_region_ratio=0.4, model_size='small'):
+                             road_region_ratio=0.4, model_size='small',
+                             conf_threshold=0.25):
     """
     Mode 6 主函数：自车速度估计
 
@@ -217,8 +249,7 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
     writer = None
     if output_path:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        writer = get_video_writer(output_path, fps, width, height)
 
     csv_rows = []
     frame_idx = 0
@@ -232,7 +263,7 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
             if not ret:
                 break
 
-            if frame_idx % depth_frequency == 0:
+            if frame_idx % depth_frequency == 1 or depth_cache is None:
                 depth_cache = depth_estimator.estimate_depth(frame, intrinsics)
 
             speed_ms = 0.0
@@ -279,20 +310,27 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
         base_csv = str(Path(output_path).with_suffix(''))
 
         # ── CSV: 按秒汇总（m/s单位，含累计位移 + 汇总行）────────
-        fps_safe  = fps if fps > 0 else 30.0
-        fps_int   = max(1, int(round(fps_safe)))
+        # 注意：必须基于帧的绝对时间（帧号/fps）来划分"秒"，
+        # 而非基于 fps_int 步长，否则低fps视频（如2fps）每"秒"只有2帧数据
+        fps_safe = fps if fps > 0 else 30.0
         stats_rows = []
         cumulative_disp = 0.0
 
-        for sec_start in range(0, len(csv_rows), fps_int):
-            sec_rows   = csv_rows[sec_start:sec_start + fps_int]
+        # 按整数秒分组：second_key = floor(frame / fps)
+        second_groups = defaultdict(list)
+        for row in csv_rows:
+            second_key = int(row['frame'] / fps_safe)
+            second_groups[second_key].append(row)
+
+        for sec_idx in sorted(second_groups.keys()):
+            sec_rows = second_groups[sec_idx]
             sec_speeds = [r['speed_ms'] for r in sec_rows]
             duration_s = len(sec_rows) / fps_safe
-            avg_spd    = sum(sec_speeds) / len(sec_speeds)
-            disp       = avg_spd * duration_s
+            avg_spd = sum(sec_speeds) / len(sec_speeds)
+            disp = avg_spd * duration_s
             cumulative_disp += disp
             stats_rows.append({
-                'second':                    sec_start // fps_int,
+                'second':                    sec_idx,
                 'start_frame':               sec_rows[0]['frame'],
                 'end_frame':                 sec_rows[-1]['frame'],
                 'avg_speed_ms':              round(avg_spd, 3),
@@ -317,13 +355,37 @@ def process_video_ego_speed(input_path, output_path, show_video=True,
             'cumulative_displacement_m': round(cumulative_disp, 2),
         })
 
-        stats_csv_path = base_csv + '_stats.csv'
-        with open(stats_csv_path, 'w', newline='', encoding='utf-8') as f:
-            csv_writer = csv.DictWriter(f, fieldnames=stats_rows[0].keys())
-            csv_writer.writeheader()
-            csv_writer.writerows(stats_rows)
-        n_secs = len(stats_rows) - 1
-        print(f"[CSV] Stats: {stats_csv_path}  ({n_secs}s + summary  |  total disp {cumulative_disp:.1f} m)")
+        if csv_rows:
+            frames_csv_path = base_csv + '_frames.csv'
+            write_csv_with_header(
+                frames_csv_path,
+                fieldnames=list(csv_rows[0].keys()),
+                rows=csv_rows,
+                header_lines=[
+                    "mode: 6 | algorithm: EgoSpeed (road optical flow + Metric3D absolute depth)",
+                    "unit: speed_ms = m/s (ego-vehicle forward speed), speed_kmh = km/h",
+                    "⚠️  This mode estimates SELF vehicle speed, not external object speed",
+                    "⚠️  road_avg_depth_m: average depth of sampled road pixels (meters)",
+                    "⚠️  road_valid_pixels: number of valid road pixels used per frame",
+                ]
+            )
+            print(f"[CSV] Frames: {frames_csv_path} ({len(csv_rows)} rows)")
+
+        if stats_rows:
+            stats_csv_path = base_csv + '_stats.csv'
+            write_csv_with_header(
+                stats_csv_path,
+                fieldnames=list(stats_rows[0].keys()),
+                rows=stats_rows,
+                header_lines=[
+                    "mode: 6 | algorithm: EgoSpeed (road optical flow + Metric3D absolute depth)",
+                    "unit: avg_speed_ms = m/s, max/min in m/s; displacement in meters",
+                    "⚠️  This mode estimates SELF vehicle speed, not external object speed",
+                    "SUMMARY row: overall statistics across all frames",
+                ]
+            )
+            n_secs = len(stats_rows) - 1
+            print(f"[CSV] Stats: {stats_csv_path}  ({n_secs}s + summary  |  total disp {cumulative_disp:.1f} m)")
 
     print(f"\n[OK] Done. {frame_idx} frames processed")
     return True

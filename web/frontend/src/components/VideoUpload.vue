@@ -12,7 +12,7 @@
     >
       <p style="font-size: 48px; margin-bottom: 10px;">📁</p>
       <p style="color: #666; margin-bottom: 10px;">拖拽视频文件到这里或点击上传</p>
-      <p style="color: #999; font-size: 12px;">支持 MP4, AVI, MOV 格式</p>
+      <p style="color: #999; font-size: 12px;">支持 MP4, AVI, MOV, MKV（最大 500MB）</p>
       <input 
         ref="fileInput" 
         type="file" 
@@ -81,11 +81,29 @@ const handleDrop = (event) => {
   isDragging.value = false
   const file = event.dataTransfer.files[0]
   if (file && file.type.startsWith('video/')) {
+    if (file.size > 500 * 1024 * 1024) {
+      uploadMessage.value = `文件超过500MB限制（当前${formatFileSize(file.size)}）`
+      return
+    }
     uploadedFile.value = file
     uploadSuccess.value = false
     uploadMessage.value = ''
   } else {
     uploadMessage.value = '请上传视频文件'
+  }
+}
+
+const handleFileSelect = (event) => {
+  const file = event.target.files[0]
+  if (file) {
+    if (file.size > 500 * 1024 * 1024) {
+      uploadMessage.value = `文件超过500MB限制（当前${formatFileSize(file.size)}）`
+      uploadedFile.value = null
+      return
+    }
+    uploadedFile.value = file
+    uploadSuccess.value = false
+    uploadMessage.value = ''
   }
 }
 

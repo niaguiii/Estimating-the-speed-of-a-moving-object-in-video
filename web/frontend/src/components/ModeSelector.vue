@@ -491,7 +491,7 @@ const usingEnhanced = ref(false)
 
 // 质量指标标签映射
 const issueLabels = {
-  blur: { icon: '📷', label: '画面模糊', desc: '检测到运动模糊或失焦，建议去模糊处理' },
+  blur: { icon: '📷', label: '画面模糊', desc: '检测到运动模糊或失焦，建议去模糊处理（⚠️ EgoSpeed 不适用）' },
   haze: { icon: '🌫️', label: '雾气较重', desc: '检测到雾/霾干扰，建议去雾处理' },
   brightness: { icon: '🌙', label: '亮度偏低', desc: '检测到低光照/暗部过多，建议提亮处理' },
   brightness_overexposed: { icon: '☀️', label: '画面过曝', desc: '检测到亮部过曝/高光溢出，建议降低亮度处理' },
@@ -676,6 +676,7 @@ const endDrag = () => {
 
 // ---------- 接受增强，进入模式选择 ----------
 const useEnhancedAndGo = () => {
+  usingEnhanced.value = true
   phase.value = 'mode_select'
 }
 

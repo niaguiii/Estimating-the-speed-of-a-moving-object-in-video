@@ -1,4 +1,4 @@
-# 项目结构文档
+﻿# 项目结构文档
 
 **[本文档 docs/PROJECT_STRUCTURE.md]** — 详细目录结构、模块关系、配置说明
 
@@ -23,9 +23,8 @@ Estimating-the-speed-of-a-moving-object-in-video/
 │
 ├── .gitignore                 # Git 忽略规则（模型、日志、缓存等）
 │
-├── src/                       # 核心源代码模块（16 个 .py 文件，扁平结构）
+├── src/                       # 核心源代码模块（15 个 .py 文件，扁平结构）
 │   ├── __init__.py
-│   ├── config.py              # 全局配置（阈值、路径、颜色等）
 │   ├── model_config.py        # 模型下载路径管理（必须在 DL 库之前 import）
 │   │
 │   ├── mode1_detection_tracking.py    # Mode 1: YOLOv8 检测 + ByteTrack 追踪
@@ -168,12 +167,19 @@ Estimating-the-speed-of-a-moving-object-in-video/
 
 | 端点 | 说明 |
 |------|------|
-| `POST /upload` | 上传视频文件 |
-| `POST /process` | 启动视频处理（异步，后端启动子进程） |
-| `GET /status` | 轮询处理进度 |
-| `GET /download/{filename}` | 下载处理结果（视频或 CSV） |
-| `GET /logs/{task_id}` | 获取处理日志 |
-| `DELETE /cancel/{task_id}` | 取消正在运行的处理任务 |
+| `POST /api/upload` | 上传视频文件 |
+| `POST /api/process` | 启动视频处理（异步，后端启动线程） |
+| `GET /api/task/{task_id}` | 轮询处理进度 |
+| `GET /api/files/{task_id}/{filepath}` | 下载指定中间文件（标注视频、CSV等） |
+| `GET /api/download-enhanced/{video_id}` | 下载增强后视频 |
+| `GET /api/download-original/{video_id}` | 下载原始视频 |
+| `GET /api/download/{task_id}` | 下载处理结果（自动选择视频或打包） |
+| `GET /api/download-zip/{task_id}` | 下载完整结果包（含视频+所有CSV） |
+| `GET /api/history` | 获取处理历史记录 |
+| `POST /api/detect-quality` | 质量检测（仅报告问题，不处理） |
+| `POST /api/enhance` | 视频预处理增强 |
+| `POST /api/cancel/{task_id}` | 取消正在运行的任务 |
+| `GET /api/` | 健康检查 |
 
 ### 3.3 前后端通信
 
@@ -218,18 +224,7 @@ Estimating-the-speed-of-a-moving-object-in-video/
 
 ## 6. 主要配置参数
 
-### 6.1 全局配置（`src/config.py`）
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `CONFIDENCE_THRESHOLD` | 0.25 | YOLOv8 检测置信度阈值 |
-| `IOU_THRESHOLD` | 0.45 | ByteTrack IoU 匹配阈值 |
-| `MAX_AGE` | 30 | ByteTrack 最大未匹配帧数 |
-| `N_INIT_FRAMES` | 3 | ByteTrack 初始化帧数 |
-| `EMA_ALPHA_SPEED` | 0.3 | Mode 2/3/4 速度 EMA 平滑系数 |
-| `WARMUP_FRAMES` | 30 | Mode 6 预热帧数 |
-
-### 6.2 Mode 5/6 专用参数（`src/mode5_metric3d_v2.py` / `src/mode6_ego_speed.py`）
+### 6.1 Mode 5/6 专用参数（`src/mode5_metric3d_v2.py` / `src/mode6_ego_speed.py`）
 
 | 参数 | Mode 5 | Mode 6 | 说明 |
 |------|--------|--------|------|

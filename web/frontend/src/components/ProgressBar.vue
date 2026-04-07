@@ -13,6 +13,8 @@
         <span v-if="mode === 2">检测+追踪+速度（CPU友好）</span>
         <span v-if="mode === 3">RAFT光流（移动摄像头）</span>
         <span v-if="mode === 4">RAFT+深度（最高精度）</span>
+        <span v-if="mode === 5">Metric3D v2 绝对深度</span>
+        <span v-if="mode === 6">EgoSpeed 自车速度</span>
         | 已处理时长: {{ processingElapsedTime }}
       </div>
 

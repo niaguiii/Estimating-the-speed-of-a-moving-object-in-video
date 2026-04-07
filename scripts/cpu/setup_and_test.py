@@ -135,11 +135,12 @@ def create_test_video():
         import cv2
         import numpy as np
         
-        # 确保input文件夹存在
-        if not os.path.exists('input'):
-            os.makedirs('input')
+        # 确保data/cli/input文件夹存在
+        input_dir = 'data/cli/input'
+        if not os.path.exists(input_dir):
+            os.makedirs(input_dir)
         
-        output_path = 'input/test_video.mp4'
+        output_path = f'{input_dir}/test_video.mp4'
         
         # 视频参数
         width, height = 640, 480
@@ -184,14 +185,13 @@ def check_project_structure():
     """检查项目结构"""
     print("\n📁 检查项目结构...")
     
-    required_dirs = ['input', 'output', 'models', 'docs', 'src', 'scripts']
+    required_dirs = ['models', 'docs', 'src', 'scripts', 'data', 'data/cli/input', 'data/cli/output']
     core_files = [
         'main.py',
         'README.md',
         'scripts/cpu/requirements.txt',
-        'src/config.py',
         'src/main_opencv.py',
-        'src/main_yolov8_speed.py'
+        'src/main_yolov8_native.py'
     ]
     
     all_good = True

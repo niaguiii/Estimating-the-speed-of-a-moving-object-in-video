@@ -59,8 +59,8 @@ python setup_and_test.py
 ## 📦 安装内容
 
 ### 核心框架
-- PyTorch 2.9.1+cpu
-- Torchvision 0.24.1+cpu
+- PyTorch 2.6.0+cpu
+- Torchvision 0.19.0+cpu
 
 ### Phase 3 依赖
 - timm (Depth Anything)
@@ -92,7 +92,7 @@ python ../test_project.py --mode deps
 
 **期望输出：**
 ```
- PyTorch: 2.9.1+cpu
+ PyTorch: 2.6.0+cpu
  CUDA Available: False (CPU mode for local dev)
  RAFT Large model available
  Depth Anything dependencies ready
@@ -173,8 +173,8 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 根据检查，你的CPU环境已经完全安装成功！
 
 ```
-✅ PyTorch 2.9.1+cpu - 已安装
-✅ Torchvision 0.24.1+cpu - 已安装
+✅ PyTorch 2.6.0+cpu - 已安装
+✅ Torchvision 0.19.0+cpu - 已安装
 ✅ RAFT支持 - 已就绪
 ✅ Depth Anything - 已就绪
 ✅ YOLOv8 + ByteTrack - 已就绪

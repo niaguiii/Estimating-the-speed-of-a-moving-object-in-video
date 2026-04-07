@@ -28,12 +28,29 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
+from enhance_video import get_video_writer
 
 # 兼容相对导入和绝对导入
 try:
     from .optical_flow_raft import RAFTOpticalFlow
 except ImportError:
     from optical_flow_raft import RAFTOpticalFlow
+
+
+# =============================================================================
+# CSV 工具函数
+# =============================================================================
+
+def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
+                          header_lines: list = None):
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        if header_lines:
+            for line in header_lines:
+                f.write(f"# {line}\n")
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return csv_path
 
 
 # Standard object sizes in meters (width, height)
@@ -159,14 +176,22 @@ def process_video_with_raft(input_path: str, output_path: str,
     print("=" * 60)
     
     # 1. 初始化YOLO模型
-    print("\n[1/4] Loading YOLOv8 model...")
-    yolo_path = model_config.get_model_path('yolov8n.pt')
-    model = YOLO(yolo_path)
-    print(f"✅ YOLOv8 loaded from {yolo_path}")
+    print("\n[1/4] Loading YOLO model...")
+    try:
+        yolo_path = model_config.get_model_path('yolov8n.pt')
+        model = YOLO(yolo_path)
+        _ = model.names  # 触发模型元数据加载，失败则抛异常
+        print(f"✅ YOLOv8 loaded from {yolo_path}")
+    except Exception as e:
+        print(f"[ERROR] YOLO model loading failed: {e}")
+        return False
     
     # 2. 初始化RAFT
     print("\n[2/4] Loading RAFT model...")
     raft = RAFTOpticalFlow(model_type='small', device='auto')
+    if not raft.is_available():
+        print("[ERROR] RAFT model not available, aborting.")
+        return False
     print("✅ RAFT loaded")
     
     # 3. 打开视频
@@ -183,10 +208,9 @@ def process_video_with_raft(input_path: str, output_path: str,
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"✅ Video: {width}x{height} @ {fps}FPS, {total_frames} frames")
-    
+
     # 4. 初始化视频写入器
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = get_video_writer(output_path, fps, width, height)
     
     # 5. 初始化速度估计器
     speed_estimator = SpeedEstimatorWithRAFT(fps=fps)
@@ -196,7 +220,6 @@ def process_video_with_raft(input_path: str, output_path: str,
     
     frame_idx = 0
     prev_frame = None
-    camera_motion_history = []
     track_positions = {}  # 存储每个track的历史位置
     csv_rows = []
     
@@ -215,7 +238,6 @@ def process_video_with_raft(input_path: str, output_path: str,
         if prev_frame is not None:
             flow = raft.compute_flow(prev_frame, frame)
             camera_motion = raft.estimate_camera_motion(flow, method='median')
-            camera_motion_history.append(camera_motion)
             
             # 可视化光流（可选）
             if show_flow and frame_idx % 10 == 0:  # 每10帧显示一次
@@ -254,8 +276,9 @@ def process_video_with_raft(input_path: str, output_path: str,
                 
                 if class_name in OBJECT_REAL_SIZES:
                     # 计算表观运动（使用track历史位置）
-                    if track_id in track_positions:
-                        prev_cx, prev_cy = track_positions[track_id]
+                    prev_pos = track_positions.get(track_id)
+                    if prev_pos is not None:
+                        prev_cx, prev_cy = prev_pos
                         # 表观运动（像素/帧）
                         apparent_dx = cx - prev_cx
                         apparent_dy = cy - prev_cy
@@ -270,7 +293,7 @@ def process_video_with_raft(input_path: str, output_path: str,
                         speed = speed_estimator.update_speed(track_id, (x1, y1, x2, y2), 
                                                             class_name, real_motion)
                     
-                    # 更新位置历史
+                    # 更新位置历史（放在计算之后，避免使用已更新的值）
                     track_positions[track_id] = (cx, cy)
                 
                 csv_rows.append({
@@ -349,12 +372,19 @@ def process_video_with_raft(input_path: str, output_path: str,
     if show_video:
         cv2.destroyAllWindows()
     
-    if csv_rows:
+    if csv_rows and output_path:
         csv_path = str(Path(output_path).with_suffix('.csv'))
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(csv_rows)
+        write_csv_with_header(
+            csv_path,
+            fieldnames=list(csv_rows[0].keys()),
+            rows=csv_rows,
+            header_lines=[
+                "mode: 3 | algorithm: YOLOv8 + ByteTrack + RAFT Optical Flow + Speed Estimation",
+                "unit: speed_ms = m/s, speed_kmh = km/h; camera/real motion in px/frame",
+                "camera_dx/dy: camera motion estimated by RAFT optical flow (pixels/frame)",
+                "real_dx/dy: object apparent motion minus camera motion (pixels/frame), after RAFT compensation",
+            ]
+        )
         print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")
     
     print(f"\n{'=' * 60}")

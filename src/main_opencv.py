@@ -9,8 +9,7 @@ import argparse
 import sys
 import urllib.request
 
-# 追踪器可用性检测（预留接口，实际使用Ultralytics内置ByteTrack）
-# ByteTrack功能已集成到核心mode文件中，此文件为遗留参考实现
+from enhance_video import get_video_writer
 
 class OpenCVObjectDetector:
     def __init__(self):
@@ -335,15 +334,9 @@ class SimpleTracker:
         """计算两点距离"""
         return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
 
-def process_video(input_path, output_path=None, show_video=True, use_bytetrack=True):
+def process_video(input_path, output_path=None, show_video=True):
     """
-    处理视频
-    
-    Args:
-        input_path: 输入视频路径
-        output_path: 输出视频路径
-        show_video: 是否显示实时预览
-        use_bytetrack: 是否使用ByteTrack（默认True）
+    处理视频（OpenCV版本，使用DNN模块加载YOLO）
     """
     print("正在初始化检测器...")
     detector = OpenCVObjectDetector()
@@ -376,8 +369,7 @@ def process_video(input_path, output_path=None, show_video=True, use_bytetrack=T
     
     # 设置输出视频
     if output_path:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = get_video_writer(output_path, fps, width, height)
     
     frame_count = 0
     

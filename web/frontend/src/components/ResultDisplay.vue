@@ -45,17 +45,25 @@
 
       <!-- 检测物体截图（仅 Mode 5 有） -->
       <div v-if="cropFiles.length > 0" class="crop-section">
-        <div class="section-sub-title">🚗 检测到的物体截图（共 {{ cropFiles.length }} 个）</div>
+        <div class="section-sub-title">🚗 检测到的物体截图（共 {{ cropFiles.length }} 张，分页展示）</div>
         <p class="crop-hint">以下截图已包含在上方的 ZIP 压缩包中，可点击查看大图</p>
         <div class="crop-grid">
           <div
-            v-for="crop in cropFiles"
+            v-for="crop in paginatedCrops"
             :key="crop.name"
             class="crop-card"
           >
-            <img :src="crop.url" :alt="crop.name" class="crop-thumb" />
+            <img :src="crop.url" :alt="crop.name" class="crop-thumb" loading="lazy" />
             <div class="crop-label">{{ getCropLabel(crop.name) }}</div>
           </div>
+        </div>
+        <!-- 分页控件 -->
+        <div v-if="totalPages > 1" class="pagination">
+          <button :disabled="currentPage === 1" @click="currentPage = 1">«</button>
+          <button :disabled="currentPage === 1" @click="currentPage--">‹</button>
+          <span class="page-info">{{ currentPage }} / {{ totalPages }}</span>
+          <button :disabled="currentPage === totalPages" @click="currentPage++">›</button>
+          <button :disabled="currentPage === totalPages" @click="currentPage = totalPages">»</button>
         </div>
       </div>
 
@@ -74,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { getDownloadUrl, getDataZipUrl, getEnhancedVideoUrl } from '../api'
 
 const props = defineProps(['taskId', 'mode', 'enhancedVideoId'])
@@ -83,6 +91,15 @@ const emit = defineEmits(['reset'])
 const csvFiles  = ref([])
 const cropFiles = ref([])
 const zipUrl    = ref('')
+const currentPage = ref(1)
+const PAGE_SIZE = 24
+
+const totalPages = computed(() => Math.max(1, Math.ceil(cropFiles.value.length / PAGE_SIZE)))
+
+const paginatedCrops = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return cropFiles.value.slice(start, start + PAGE_SIZE)
+})
 
 const resultVideoUrl = computed(() => getDownloadUrl(props.taskId))
 const downloadUrl    = computed(() => getDownloadUrl(props.taskId))
@@ -98,6 +115,9 @@ const zipName = computed(() => {
 const dataDesc = computed(() => {
   if (props.mode === 5) {
     return `${csvFiles.value.length} 个 CSV + ${cropFiles.value.length} 张截图`
+  }
+  if (props.mode === 6) {
+    return `${csvFiles.value.length} 个 CSV`
   }
   return `${csvFiles.value.length} 个 CSV`
 })
@@ -129,6 +149,9 @@ onMounted(async () => {
     zipUrl.value = getDataZipUrl(props.taskId)
   }
 })
+
+// 切换任务时重置分页
+watch(() => props.taskId, () => { currentPage.value = 1 })
 </script>
 
 <style scoped>
@@ -312,5 +335,40 @@ onMounted(async () => {
     font-size: 12px;
     color: #6b7280;
     margin-top: 2px;
+}
+
+/* 分页控件 */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.pagination button {
+    padding: 4px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.pagination button:hover:not(:disabled) {
+    background: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.pagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.page-info {
+    padding: 4px 12px;
+    font-weight: bold;
+    color: #333;
 }
 </style>

@@ -37,7 +37,8 @@ def main():
     parser.add_argument('mode', type=int, help='Processing mode (1-6)')
     parser.add_argument('output_dir', help='Output directory')
     parser.add_argument('--focal-mm', type=float, default=None, help='Equivalent focal length in mm (Mode 5/6)')
-    parser.add_argument('--depth-freq', type=int, default=None, help='Depth update frequency (Mode 5)')
+    parser.add_argument('--depth-freq', type=int, default=None, help='Depth update frequency (Mode 5/6)')
+    parser.add_argument('--road-ratio', type=float, default=None, help='Road region ratio, 0-1 (Mode 6)')
     args = parser.parse_args()
 
     task_id = args.task_id
@@ -80,7 +81,10 @@ def main():
             import mode6_ego_speed
             process_func = mode6_ego_speed.process_video_ego_speed
             fov = _calc_fov(focal_mm, default=75.0)
-            kwargs = {'fov_degrees': fov}
+            road_ratio = args.road_ratio if args.road_ratio is not None else 0.4
+            depth_freq_val = depth_freq if depth_freq is not None else 5
+            kwargs = {'fov_degrees': fov, 'road_region_ratio': road_ratio,
+                      'model_size': 'small', 'depth_frequency': depth_freq_val}
         else:
             raise ValueError(f"不支持的模式: {mode}. 请选择1-6")
 

@@ -6,7 +6,7 @@
 
 **⚠️ 重要提示：CUDA版本选择**
 - **RTX 50系列**（5090, 5080等）：必须使用 **CUDA 12.8+**
-- **RTX 40系列及以下**（4090, 3090等）：使用 **CUDA 11.8**
+- **RTX 40系列及以下**（4090, 3090等）：使用 **CUDA 12.4**
 
 **适用场景：**
 - ✅ GPU云服务器（AutoDL、恒源云等）
@@ -49,7 +49,7 @@ chmod +x install_gpu.sh
 **说明：**
 - ✅ 从零开始完整安装
 - ✅ 自动安装PyTorch + CUDA（**会提示选择CUDA版本**）
-- ✅ **RTX 5090选择选项1（CUDA 12.8），RTX 4090选择选项2（CUDA 11.8）**
+- ✅ **RTX 5090选择选项1（CUDA 12.8），RTX 4090选择选项2（CUDA 12.4）**
 - ✅ 自动验证GPU可用
 - ⏱️ 需要15-30分钟
 
@@ -83,8 +83,8 @@ chmod +x switch_to_gpu.sh
 
 ### 核心框架（GPU版本）
 **根据GPU型号自动选择：**
-- **RTX 50系列**：PyTorch 2.7.0+cu128 (CUDA 12.8) + Torchvision 0.18.0+cu128
-- **RTX 40系列及以下**：PyTorch 2.9.1+cu118 (CUDA 11.8) + Torchvision 0.24.1+cu118
+- **RTX 50系列**：PyTorch 2.7.0+cu128 (CUDA 12.8) + Torchvision 0.22.0+cu128
+- **RTX 40系列及以下**：PyTorch 2.6.0+cu124 (CUDA 12.4) + Torchvision 0.19.0+cu124
 
 ### Phase 3 & 4 依赖
 - timm (Depth Anything)
@@ -123,18 +123,18 @@ chmod +x switch_to_gpu.sh
 | 平台 | GPU型号 | 价格/小时 | CUDA版本 | 推荐 |
 |------|---------|----------|----------|------|
 | **AutoDL** | RTX 5090 | ¥2.8 | 12.8 | ⭐⭐⭐⭐⭐ 最强 |
-| **AutoDL** | RTX 4090 | ¥3-4 | 11.8 | ⭐⭐⭐⭐⭐ |
-| **AutoDL** | RTX 3090 | ¥2-2.5 | 11.8 | ⭐⭐⭐⭐ |
-| **AutoDL** | RTX 3060 | ¥1.2 | 11.8 | ⭐⭐⭐ 经济 |
-| **恒源云** | RTX 3070 | ¥1.5 | 11.8 | ⭐⭐⭐⭐ |
-| **阿里云** | T4 | ¥2-3 | 11.8 | ⭐⭐⭐ |
+| **AutoDL** | RTX 4090 | ¥3-4 | 12.4 | ⭐⭐⭐⭐⭐ |
+| **AutoDL** | RTX 3090 | ¥2-2.5 | 12.4 | ⭐⭐⭐⭐ |
+| **AutoDL** | RTX 3060 | ¥1.2 | 12.4 | ⭐⭐⭐ 经济 |
+| **恒源云** | RTX 3070 | ¥1.5 | 12.4 | ⭐⭐⭐⭐ |
+| **阿里云** | T4 | ¥2-3 | 12.4 | ⭐⭐⭐ |
 
 **推荐配置：**
 - GPU: RTX 3060 或更好（**RTX 5090最快**）
 - 内存: 16GB+
 - 硬盘: 50GB+
 - 镜像: PyTorch 2.7+ 或 Ubuntu 20.04
-- **重要：RTX 50系列必须选择CUDA 12.8镜像**
+- **重要：RTX 50系列必须选择CUDA 12.8镜像，RTX 40系列建议选择CUDA 12.4镜像**
 
 ### 步骤2: 上传项目
 
@@ -183,7 +183,7 @@ python test_project.py --mode gpu
 
 **期望输出：**
 ```
-✅ PyTorch: 2.9.1+cu118
+✅ PyTorch: 2.6.0+cu124
 ✅ CUDA Available: True  👈 重要！
 ✅ GPU Device: NVIDIA GeForce RTX 3060
 ```
@@ -206,7 +206,7 @@ python main.py
 
 ### GPU服务器配置
 - **GPU**: NVIDIA GPU with CUDA support
-- **CUDA**: 11.8 或 12.x
+- **CUDA**: 12.4 (RTX 40) / 12.8 (RTX 50) 或更高
 - **内存**: 16GB+ 推荐
 - **硬盘**: 50GB+ 可用空间
 - **Python**: 3.8+
@@ -258,10 +258,10 @@ python main.py
 
 ## 🔧 常见问题
 
-### Q1: 必须使用CUDA 11.8吗？
-**A:** 不是。脚本默认使用11.8，但可以改：
-- CUDA 12.1: 修改为 `cu121`
-- CUDA 11.7: 修改为 `cu117`
+### Q1: 必须使用CUDA 12.4吗？
+**A:** 不是。但 RTX 40 系列推荐使用 12.4，以匹配 PyTorch 2.6.0+cu124：
+- CUDA 12.4: 匹配 PyTorch 2.6.0+cu124（推荐）
+- CUDA 11.8: PyTorch 2.6.0 不提供 cu118 版本，需降级 PyTorch
 
 ### Q2: 安装失败怎么办？
 **A:** 检查步骤：
@@ -336,9 +336,9 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 **RTX 40系列及以下（4090, 3090, 3060等）：**
 ```bash
-# 使用CUDA 11.8版本
+# 使用CUDA 12.4版本（推荐，匹配PyTorch 2.6.0+cu124）
 pip uninstall torch torchvision -y
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
 
 **注意：** AutoDL镜像通常预装PyTorch，检查版本是否匹配你的GPU。
@@ -367,8 +367,8 @@ cd scripts/gpu && ./install_gpu.sh     # Linux (RTX 5090选1, RTX 4090选2)
 # 手动安装PyTorch (RTX 50系列 - CUDA 12.8)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
-# 手动安装PyTorch (RTX 40系列及以下 - CUDA 11.8)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# 手动安装PyTorch (RTX 40系列及以下 - CUDA 12.4)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # 快速切换
 cd scripts/gpu && switch_to_gpu.bat    # Windows
@@ -403,7 +403,7 @@ python main.py
 
 **关键提醒：**
 - ⚠️ **RTX 50系列（5090, 5080）必须用CUDA 12.8**
-- ⚠️ **RTX 40系列及以下用CUDA 11.8**
+- ⚠️ **RTX 40系列及以下用CUDA 12.4（推荐PyTorch 2.6.0+cu124）**
 - ✅ 安装脚本会提示选择，选错可重装
 
 **成本：** < ¥20

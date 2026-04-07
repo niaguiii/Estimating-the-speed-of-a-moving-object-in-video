@@ -82,11 +82,11 @@ def test_raft_simple():
     print("🌊 RAFT光流快速测试")
     print("=" * 70)
     
-    sys.path.insert(0, str(PROJECT_ROOT / "src"))
-    
+    sys.path.insert(0, str(PROJECT_ROOT))
+
     try:
         print("\n  1️⃣ 导入RAFT模块...")
-        from optical_flow_raft import RAFTOpticalFlow
+        from src.optical_flow_raft import RAFTOpticalFlow
         print("     ✅ RAFT模块导入成功")
         
         print("\n  2️⃣ 创建测试数据...")
@@ -123,11 +123,11 @@ def test_depth_simple():
     print("🏔️ Depth Anything V2 快速测试")
     print("=" * 70)
     
-    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+    sys.path.insert(0, str(PROJECT_ROOT))
     
     try:
         print("\n  1️⃣ 导入Depth模块...")
-        from depth_estimation import DepthAnythingV2
+        from src.depth_estimation import DepthAnythingV2
         print("     ✅ Depth模块导入成功")
         
         print("\n  2️⃣ 创建测试图像...")
