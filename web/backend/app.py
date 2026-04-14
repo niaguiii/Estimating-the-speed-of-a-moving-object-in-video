@@ -89,7 +89,6 @@ class ProcessRequest(BaseModel):
     show_visualization: bool = True
     focal_mm: Optional[float] = None      # Mode 5/6: 等效焦段(mm)，默认50(Mode5)/24(Mode6)
     depth_frequency: Optional[int] = None  # Mode 5/6: 深度更新频率，默认5
-    road_region_ratio: Optional[float] = None  # Mode 6: 路面采样区域比例，默认0.4
     apply_enhancement: bool = False       # 是否启用预处理增强
     enhancement_options: Optional[list] = None  # ["blur", "haze", "brightness"]
 
@@ -179,10 +178,13 @@ def _clean_old_tasks(max_age_hours: int = 24):
             # 删除 CSV 文件
             for f in OUTPUT_DIR.glob(f"{tid}_output*.csv"):
                 f.unlink(missing_ok=True)
-            # 删除 crops 目录
+            # 删除图片目录
             crops_dir = OUTPUT_DIR / f"{tid}_output_crops"
             if crops_dir.exists():
                 shutil.rmtree(crops_dir, ignore_errors=True)
+            diagnostics_dir = OUTPUT_DIR / f"{tid}_output_diagnostics"
+            if diagnostics_dir.exists():
+                shutil.rmtree(diagnostics_dir, ignore_errors=True)
 
             # 删除原始上传视频（如果任务还在 uploads 目录）
             video_id = task.get("video_id", "")
@@ -377,8 +379,7 @@ async def start_process(request: Request, request_body: ProcessRequest):
                 "created_at": datetime.now().isoformat()
             }
 
-        # 使用subprocess启动独立进程（可以强制终止），最多重试2次
-        MAX_RETRIES = 2
+        # 使用 subprocess 启动独立进程（可以强制终止）
         PROCESS_TIMEOUT_SEC = 3600  # 1小时超时
         python_path = sys.executable
         script_path = Path(__file__).parent / "process_worker.py"
@@ -389,42 +390,9 @@ async def start_process(request: Request, request_body: ProcessRequest):
             extra_args.extend(['--focal-mm', str(request_body.focal_mm)])
         if request_body.depth_frequency is not None:
             extra_args.extend(['--depth-freq', str(request_body.depth_frequency)])
-        if request_body.road_region_ratio is not None:
-            extra_args.extend(['--road-ratio', str(request_body.road_region_ratio)])
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            if attempt > 1:
-                # 重试前先终止上一轮残留的进程（避免资源泄漏）
-                prev_tid = previous_task_id
-                if prev_tid in task_threads:
-                    try:
-                        old_proc = task_threads[prev_tid]
-                        pid = old_proc.pid
-                        old_proc.terminate()
-                        try:
-                            old_proc.wait(timeout=3)
-                        except subprocess.TimeoutExpired:
-                            old_proc.kill()
-                        with state_lock:
-                            task_threads.pop(prev_tid, None)
-                        print(f"[Retry] 已终止残留进程 PID {pid}")
-                    except Exception as e:
-                        print(f"[Retry] 终止残留进程失败: {e}")
-                # 生成新task_id（避免与之前残留文件冲突）
-                task_id = str(uuid.uuid4())
-                with state_lock:
-                    tasks[task_id] = {
-                        **tasks.get(original_task_id, {}),
-                        "task_id": task_id,
-                        "retry": attempt,
-                        "message": f"重试第 {attempt} 次...",
-                    }
-            else:
-                original_task_id = task_id
-
-            previous_task_id = task_id  # 记录本次 task_id，供下次循环清理
-
-            # 启动子进程（捕获stdout实时输出）
+        # 启动子进程（捕获stdout实时输出）
+        try:
             process = subprocess.Popen(
                 [python_path, str(script_path), task_id, processed_input_path,
                  str(mode), str(OUTPUT_DIR)] + extra_args,
@@ -437,62 +405,38 @@ async def start_process(request: Request, request_body: ProcessRequest):
                 cwd=str(PROJECT_ROOT),
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
-
-            task_threads[task_id] = process
-
-            # 启动stdout监控线程（解析进度）
-            monitor_thread = threading.Thread(
-                target=monitor_stdout_progress,
-                args=(task_id, process, total_frames)
-            )
-            monitor_thread.daemon = True
-            monitor_thread.start()
-
-            # 启动进程完成监控线程
-            completion_thread = threading.Thread(
-                target=monitor_process_completion,
-                args=(task_id, process)
-            )
-            completion_thread.daemon = True
-            completion_thread.start()
-
-            # 等待本次尝试完成（带超时）
-            completion_thread.join(timeout=PROCESS_TIMEOUT_SEC)
-
-            # 超时：强制终止进程
-            if completion_thread.is_alive():
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                with state_lock:
-                    tasks[task_id] = {
-                        **tasks.get(task_id, {}),
-                        "status": "failed",
-                        "message": f"处理超时（超过 {PROCESS_TIMEOUT_SEC} 秒），已强制终止",
-                        "progress": 0
-                    }
-
-            # 检查结果：成功则退出重试循环
+        except Exception:
             with state_lock:
-                current_status = tasks.get(task_id, {}).get("status")
-            if current_status == "completed":
-                return {
-                    "success": True,
-                    "task_id": task_id,
-                    "message": "处理任务已完成",
-                    "applied_enhancement": applied_enhancement
-                }
+                if task_id in tasks:
+                    tasks[task_id]["status"] = "failed"
+                    tasks[task_id]["message"] = "处理进程启动失败"
+                    tasks[task_id]["progress"] = 0
+            raise
 
-            # 失败且还有重试机会
-            if attempt < MAX_RETRIES:
-                with state_lock:
-                    tasks[task_id]["message"] = f"处理失败，正在重试 ({attempt}/{MAX_RETRIES})..."
-                print(f"[Retry] task_id={task_id} attempt {attempt} failed, retrying...")
+        task_threads[task_id] = process
 
-        # 全部重试均失败
-        raise HTTPException(status_code=500, detail="视频处理多次失败，请检查视频文件或模型配置")
+        # 启动stdout监控线程（解析进度）
+        monitor_thread = threading.Thread(
+            target=monitor_stdout_progress,
+            args=(task_id, process, total_frames)
+        )
+        monitor_thread.daemon = True
+        monitor_thread.start()
+
+        # 启动进程完成监控线程
+        completion_thread = threading.Thread(
+            target=monitor_process_completion,
+            args=(task_id, process, PROCESS_TIMEOUT_SEC)
+        )
+        completion_thread.daemon = True
+        completion_thread.start()
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "message": "处理任务已启动",
+            "applied_enhancement": applied_enhancement
+        }
 
     except HTTPException:
         raise
@@ -511,7 +455,7 @@ async def get_task_status(task_id: str):
         # 深拷贝，防止返回后外部直接修改内部状态
         task = dict(tasks[task_id])
 
-    # 处理完成时，扫描输出目录下的 CSV 文件和 crops 截图目录
+    # 处理完成时，扫描输出目录下的 CSV 文件和截图/诊断图目录
     csv_files = []
     crop_files = []
     if task["status"] == "completed" and OUTPUT_DIR.exists():
@@ -521,14 +465,21 @@ async def get_task_status(task_id: str):
                 "size": f.stat().st_size,
                 "url": f"/api/files/{task_id}/{f.name}"
             })
-        crops_dir = OUTPUT_DIR / f"{task_id}_output_crops"
-        if crops_dir.exists():
-            for f in sorted(crops_dir.iterdir()):
+        mode_value = task.get("mode")
+        image_dir = OUTPUT_DIR / (
+            f"{task_id}_output_diagnostics" if mode_value == 6 else f"{task_id}_output_crops"
+        )
+        legacy_dir = OUTPUT_DIR / f"{task_id}_output_crops"
+        if not image_dir.exists() and legacy_dir.exists():
+            image_dir = legacy_dir
+        if image_dir.exists():
+            dir_name = image_dir.name
+            for f in sorted(image_dir.iterdir()):
                 if f.suffix.lower() in ('.jpg', '.jpeg', '.png'):
                     crop_files.append({
                         "name": f.name,
                         "size": f.stat().st_size,
-                        "url": f"/api/files/{task_id}/{task_id}_output_crops/{f.name}"
+                        "url": f"/api/files/{task_id}/{dir_name}/{f.name}"
                     })
 
     # 去除敏感内部路径字段，不泄露给客户端
@@ -550,6 +501,7 @@ async def download_file(task_id: str, filepath: str):
     支持:
       /api/files/{id}/xxx.csv
       /api/files/{id}/xxx_crops/xxx.jpg
+      /api/files/{id}/xxx_diagnostics/xxx.png
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -650,18 +602,21 @@ async def download_result(task_id: str):
     if not str(resolved).startswith(str(OUTPUT_DIR.resolve()) + _os.sep):
         raise HTTPException(status_code=404, detail="输出文件路径越界")
 
+    mode_value = task.get("mode")
+    mode_prefix = f"mode{mode_value}" if isinstance(mode_value, int) else "result"
+
     return FileResponse(
         resolved,
         media_type="video/mp4",
-        filename=f"result_{task_id}.mp4"
+        filename=f"{mode_prefix}_result_{task_id}.mp4"
     )
 
 
 @app.get("/api/download-zip/{task_id}")
 async def download_data_zip(task_id: str):
     """
-    下载任务的所有数据（CSV + crops 截图），打包为 ZIP
-    所有 Mode 统一接口：Mode 5 包含 2个CSV + crops；其他 Mode 各 1个CSV
+    下载任务的所有数据（视频 + CSV + 图片目录），打包为 ZIP
+    Mode 5 包含目标截图；Mode 6 包含诊断图；其他模式按实际输出打包
     支持 5 分钟 ZIP 缓存，避免重复打包大文件。
     """
     import os as _os
@@ -672,7 +627,10 @@ async def download_data_zip(task_id: str):
             cached_buf, cached_at = zip_cache[task_id]
             if time.time() - cached_at < ZIP_CACHE_TTL:
                 zip_buffer = io.BytesIO(cached_buf.getvalue())
-                zip_name = f"data_{task_id}.zip"
+                with state_lock:
+                    mode_value = tasks.get(task_id, {}).get("mode")
+                mode_prefix = f"mode{mode_value}" if isinstance(mode_value, int) else "data"
+                zip_name = f"{mode_prefix}_data_{task_id}.zip"
                 return StreamingResponse(
                     zip_buffer,
                     media_type="application/zip",
@@ -704,22 +662,33 @@ async def download_data_zip(task_id: str):
     for csv_file in OUTPUT_DIR.glob(f"{task_id}_output*.csv"):
         files_to_zip.append((csv_file, csv_file.name))
 
-    # 3. crops 截图目录（仅 Mode 5 有）
-    # 兼容两种命名方式：
-    #   - 新命名：{task_id}_output_crops  （与 process_worker 协调后的新格式）
-    #   - 旧命名：{video_name}_crops（历史遗留，{stem}_crops）
-    crops_dir = OUTPUT_DIR / f"{task_id}_output_crops"
-    if not crops_dir.exists():
-        # 回退：搜索历史遗留的 _crops 目录
-        for parent in OUTPUT_DIR.glob("*_output.mp4"):
-            legacy_dir = parent.with_name(parent.stem + '_crops')
+    # 3. 图片目录：Mode 5 用 crops/，Mode 6 用 diagnostics/
+    mode_value = task.get("mode")
+    if mode_value == 6:
+        image_dir = OUTPUT_DIR / f"{task_id}_output_diagnostics"
+        image_arc_dir = "diagnostics"
+    else:
+        image_dir = OUTPUT_DIR / f"{task_id}_output_crops"
+        image_arc_dir = "crops"
+
+    if not image_dir.exists():
+        legacy_dirs = [
+            OUTPUT_DIR / f"{task_id}_output_diagnostics",
+            OUTPUT_DIR / f"{task_id}_output_crops",
+        ]
+        for legacy_dir in legacy_dirs:
             if legacy_dir.exists():
-                crops_dir = legacy_dir
+                image_dir = legacy_dir
+                if legacy_dir.name.endswith("_crops"):
+                    image_arc_dir = "crops"
+                else:
+                    image_arc_dir = "diagnostics"
                 break
-    if crops_dir.exists():
-        for crop_file in sorted(crops_dir.iterdir()):
+
+    if image_dir.exists():
+        for crop_file in sorted(image_dir.iterdir()):
             if crop_file.suffix.lower() in ('.jpg', '.jpeg', '.png'):
-                rel_path = f"crops/{crop_file.name}"
+                rel_path = f"{image_arc_dir}/{crop_file.name}"
                 files_to_zip.append((crop_file, rel_path))
 
     if not files_to_zip:
@@ -732,7 +701,9 @@ async def download_data_zip(task_id: str):
             zf.write(file_path, arc_name)
 
     zip_buffer.seek(0)
-    zip_name = f"data_{task_id}.zip"
+    mode_value = task.get("mode")
+    mode_prefix = f"mode{mode_value}" if isinstance(mode_value, int) else "data"
+    zip_name = f"{mode_prefix}_data_{task_id}.zip"
 
     # 3. 写入缓存
     with zip_cache_lock:
@@ -952,7 +923,7 @@ def monitor_stdout_progress(task_id: str, process: subprocess.Popen, total_frame
             print(line, end='')
 
             # 尝试匹配所有模式的进度输出格式
-            # 优先级：Frame N/M: (最明确) > Frame N: > Progress N%: (X/Y) > [N/M] (km/h)
+            # 优先级：Frame N/M: (最明确) > Frame N: > Progress N%: (X/Y) > [N/M] m/s
 
             # Mode 2 格式：Frame 30/900: ...
             m = re.search(r'Frame (\d+)/(\d+):', line)
@@ -979,7 +950,7 @@ def monitor_stdout_progress(task_id: str, process: subprocess.Popen, total_frame
                                 current_frame = int(m2.group(1))
                                 progress = round((current_frame / total_frames) * 100, 1)
                     else:
-                        # Mode 6 格式：[450/900]  ...km/h
+                        # Mode 6 格式：[450/900]  ...m/s
                         m = re.search(r'\[\s*(\d+)\s*/\s*(\d+)\s*\]', line)
                         if m and total_frames > 0:
                             current_frame = int(m.group(1))
@@ -1007,19 +978,36 @@ def monitor_stdout_progress(task_id: str, process: subprocess.Popen, total_frame
                 tasks[task_id]["progress"] = 100.0
 
 
-def monitor_process_completion(task_id: str, process: subprocess.Popen):
+def monitor_process_completion(task_id: str, process: subprocess.Popen, timeout_sec: int = 3600):
     """
     监控子进程完成状态。
     所有对 tasks dict 的访问都通过 state_lock 保护。
     """
     try:
-        return_code = process.wait()
+        try:
+            return_code = process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            with state_lock:
+                if task_id in tasks:
+                    tasks[task_id]["status"] = "failed"
+                    tasks[task_id]["progress"] = 0.0
+                    tasks[task_id]["message"] = f"处理超时（超过 {timeout_sec} 秒），已强制终止"
+            return
+
         output_path = OUTPUT_DIR / f"{task_id}_output.mp4"
 
         with state_lock:
             if task_id not in tasks:
                 return
-            if return_code == 0 and output_path.exists():
+            current_status = tasks[task_id].get("status")
+            if current_status == "cancelled":
+                tasks[task_id]["message"] = "任务已取消"
+            elif return_code == 0 and output_path.exists():
                 tasks[task_id]["status"] = "completed"
                 tasks[task_id]["progress"] = 100.0
                 tasks[task_id]["message"] = "处理完成"

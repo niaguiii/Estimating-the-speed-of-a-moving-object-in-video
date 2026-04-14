@@ -405,10 +405,14 @@
           <span v-if="computedFov" class="fov-display">≈ {{ computedFov }}° FOV</span>
         </div>
 
-        <div v-if="selectedMode === 5" class="depth-input-section">
+        <div v-if="selectedMode === 5 || selectedMode === 6" class="depth-input-section">
           <label class="focal-label">
-            🎯 处理精度：
-            <span class="focal-hint">决定深度计算的频率，影响速度与精度</span>
+            🎯 深度更新频率：
+            <span class="focal-hint">
+              {{ selectedMode === 5
+                ? '决定深度计算的频率，影响速度与精度'
+                : '决定自车速度估计中深度重算的频率，越小越准但越慢' }}
+            </span>
           </label>
           <div class="precision-options">
             <label

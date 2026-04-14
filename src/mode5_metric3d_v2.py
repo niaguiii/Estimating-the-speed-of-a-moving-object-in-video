@@ -1,51 +1,65 @@
 # -*- coding: utf-8 -*-
 """
-Phase 3 Metric3D: RAFT + Metric3D v2 + YOLOv8
-升级版Phase 3：光流 + 绝对深度估计 + 物体检测追踪 + 精确速度估计
+Mode 5: YOLOv8 + ByteTrack + RAFT + Metric3D v2.
 
-Features:
-- YOLOv8 object detection + ByteTrack tracking
-- RAFT optical flow for camera motion separation
-- Metric3D v2 for ABSOLUTE metric depth (输出真实米数！)
-- Depth-aware 3D speed estimation
-- Supports moving camera scenarios
-- NO manual calibration needed (自动标定)
+This pipeline estimates object speed in moving-camera videos by combining
+object detection and tracking, camera-motion compensation from RAFT optical
+flow, and absolute metric depth from Metric3D v2.
 """
+
+import argparse
+import csv
+import os
+import sys
+from collections import defaultdict, deque
+from datetime import datetime
+from pathlib import Path
+
 import cv2
 import numpy as np
-import os
-import argparse
-import sys
-import csv
-from pathlib import Path
-from datetime import datetime
-from collections import deque, defaultdict
+from ultralytics import YOLO
 
-from enhance_video import get_video_writer
+from src.enhance_video import _safe_cv2_write, get_video_writer
 
-# ⚠️ 必须先导入model_config设置环境变量
+# Import model_config as early as possible so cache and environment variables are set.
 try:
     from . import model_config
 except ImportError:
     import model_config
 
-from ultralytics import YOLO
-
-# 兼容相对导入和绝对导入
 try:
-    from .optical_flow_raft import RAFTOpticalFlow
     from .depth_estimation_metric3d import Metric3Dv2
+    from .optical_flow_raft import RAFTOpticalFlow
 except ImportError:
-    from optical_flow_raft import RAFTOpticalFlow
     from depth_estimation_metric3d import Metric3Dv2
+    from optical_flow_raft import RAFTOpticalFlow
+
+
+MOVABLE_CLASSES = {
+    "person",
+    "bicycle",
+    "motorcycle",
+    "car",
+    "bus",
+    "truck",
+    "train",
+    "boat",
+    "airplane",
+    "dog",
+    "cat",
+    "horse",
+    "bird",
+    "cow",
+    "sheep",
+}
 
 
 # =============================================================================
-# CSV 工具函数
+# CSV utilities
 # =============================================================================
 
 def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
-                          header_lines: list = None):
+                          header_lines: list | None = None):
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         if header_lines:
             for line in header_lines:
@@ -56,56 +70,90 @@ def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
     return csv_path
 
 
+def _clamp_box(box, width, height):
+    x1, y1, x2, y2 = box
+    x1 = int(np.clip(round(x1), 0, width))
+    y1 = int(np.clip(round(y1), 0, height))
+    x2 = int(np.clip(round(x2), 0, width))
+    y2 = int(np.clip(round(y2), 0, height))
+    return x1, y1, x2, y2
+
+
+def _collect_movable_boxes(boxes, class_ids, confidences, names, conf_threshold):
+    movable_boxes = []
+    for box, class_id, conf in zip(boxes, class_ids, confidences):
+        class_name = names[class_id]
+        if class_name in MOVABLE_CLASSES and float(conf) >= conf_threshold:
+            movable_boxes.append(tuple(float(v) for v in box))
+    return movable_boxes
+
+
+def _estimate_camera_motion_masked(flow, current_boxes, previous_boxes, flow_min=0.01):
+    """Estimate camera motion from static, observable flow pixels only."""
+    valid = np.isfinite(flow[..., 0]) & np.isfinite(flow[..., 1])
+    flow_mag = np.linalg.norm(flow, axis=2)
+    valid &= flow_mag > flow_min
+
+    height, width = flow.shape[:2]
+    for box in list(previous_boxes) + list(current_boxes):
+        x1, y1, x2, y2 = _clamp_box(box, width, height)
+        if x2 > x1 and y2 > y1:
+            valid[y1:y2, x1:x2] = False
+
+    if int(valid.sum()) < 200:
+        return float(np.median(flow[:, :, 0])), float(np.median(flow[:, :, 1]))
+
+    return float(np.median(flow[..., 0][valid])), float(np.median(flow[..., 1][valid]))
+
+
 class Metric3DSpeedEstimator:
-    """Metric3D 3D速度估计器（真实3D空间测速）"""
-    
+    """Depth-aware 3D speed estimator for tracked objects."""
+
     def __init__(self, fps: float = 30.0, display_interval: int = 8, window_size: int = 7):
         """
-        初始化
-
         Args:
-            fps: 视频帧率
-            window_size: 滑动窗口帧数（默认7，约0.23s@30fps，拉长测量基线降低噪声）
-            display_interval: 视频标签每N帧刷新一次显示速度（默认8，减少视觉跳动）
+            fps: Video frame rate.
+            display_interval: Update cadence for the rendered speed label.
+            window_size: Number of frames used in the sliding baseline window.
         """
         self.fps = fps
         self.window_size = window_size
-        self.position_window = {}   # 每个track的3D位置滑动窗口 {id: deque}
-        self.speed_history = {}     # 速度历史（轻EMA用）
-        self.depth_history = {}     # 每个物体的平滑深度
-        self.track_frame_count = {} # 每个track被观测的帧数
-        self.depth_alpha = 0.15     # 深度EMA系数（平滑深度台阶跳变）
-        self.ema_alpha = 0.4        # 轻EMA速度系数（窗口已滤噪，无需重度平滑）
-        self.display_delay = max(3, window_size - 1)  # 满窗口后再输出，避免短基线噪声进入CSV
+        self.position_window = {}
+        self.speed_history = {}
+        self.depth_history = {}
+        self.track_frame_count = {}
+        self.depth_alpha = 0.15
+        self.ema_alpha = 0.4
+        self.display_delay = max(3, window_size - 1)
         self.display_interval = display_interval
         self.display_speed_history = {}
         self.display_counter = {}
-        self.last_valid_frame = {}  # 记录每个track最后有效深度帧号，用于遮挡检测（depth=0不计入）
+        self.last_valid_frame = {}
 
-        print(f"[Metric3DEstimator] FPS={fps}, window={window_size}f "
-              f"({window_size/fps*1000:.0f}ms), display_interval={display_interval}f")
-    
+        print(
+            f"[Metric3DEstimator] FPS={fps}, window={window_size}f "
+            f"({window_size / fps * 1000:.0f}ms), display_interval={display_interval}f"
+        )
+
     def calculate_3d_speed(self, track_id: int,
-                          current_pos_2d: tuple,
-                          current_depth: float,
-                          camera_motion_2d: tuple,
-                          intrinsics: dict,
-                          frame_idx: int = 0) -> float:
+                           current_pos_2d: tuple,
+                           current_depth: float,
+                           camera_motion_2d: tuple,
+                           intrinsics: dict,
+                           frame_idx: int = 0) -> float:
         """
-        计算完整3D速度（m/s），包含 XYZ 三个方向。
-
-        关键：对每个物体的深度单独做 EMA 平滑，消除深度缓存
-        每N帧更新时产生的突变，同时保留 Z 方向（靠近/远离）信息。
+        Estimate depth-aware 3D speed in meters per second.
 
         Args:
-            track_id: 追踪ID
-            current_pos_2d: 当前2D像素位置 (cx, cy)
-            current_depth: Metric3D 估计的当前深度（米）
-            camera_motion_2d: RAFT 摄像头运动补偿 (dx, dy) 像素
-            intrinsics: 相机内参 {fx, fy, cx, cy}
+            track_id: Tracker ID for the current object.
+            current_pos_2d: Current box-center position in pixels.
+            current_depth: Current Metric3D depth in meters.
+            camera_motion_2d: Camera motion estimated from RAFT, in pixels/frame.
+            intrinsics: Camera intrinsics dictionary with fx, fy, cx, cy.
+            frame_idx: Current frame index.
 
         Returns:
-            speed_ms: 平滑后的3D速度 (m/s)
+            Smoothed 3D object speed in m/s.
         """
         cx, cy = current_pos_2d
         fx = intrinsics['fx']
@@ -113,26 +161,24 @@ class Metric3DSpeedEstimator:
         cx_cam = intrinsics['cx']
         cy_cam = intrinsics['cy']
 
-        # ── 深度无效防护：depth=0 不更新任何状态，间隔检测仅基于有效帧 ──
         if current_depth <= 0:
             return 0.0
 
-        # ── 深度 EMA 平滑（缓解每N帧深度更新时的台阶跳变）────
         if track_id in self.depth_history:
-            smooth_depth = (self.depth_alpha * current_depth
-                            + (1 - self.depth_alpha) * self.depth_history[track_id])
+            smooth_depth = (
+                self.depth_alpha * current_depth
+                + (1 - self.depth_alpha) * self.depth_history[track_id]
+            )
         else:
             smooth_depth = current_depth
         self.depth_history[track_id] = smooth_depth
 
-        # ── 摄像头运动补偿 → 3D 坐标 ─────────────────────────
         comp_cx = cx - camera_motion_2d[0]
         comp_cy = cy - camera_motion_2d[1]
-        X = (comp_cx - cx_cam) * smooth_depth / fx
-        Y = (comp_cy - cy_cam) * smooth_depth / fy
-        Z = smooth_depth
+        x_world = (comp_cx - cx_cam) * smooth_depth / fx
+        y_world = (comp_cy - cy_cam) * smooth_depth / fy
+        z_world = smooth_depth
 
-        # ── 遮挡检测：有效帧间隔 > 1 → 清空滑动窗口 ─────────
         if track_id in self.last_valid_frame:
             if frame_idx - self.last_valid_frame[track_id] > 1:
                 if track_id in self.position_window:
@@ -143,38 +189,34 @@ class Metric3DSpeedEstimator:
                 self.display_counter[track_id] = 0
         self.last_valid_frame[track_id] = frame_idx
 
-        # ── 更新帧计数 + 位置滑动窗口 ────────────────────────
         self.track_frame_count[track_id] = self.track_frame_count.get(track_id, 0) + 1
         frame_count = self.track_frame_count[track_id]
 
         if track_id not in self.position_window:
             self.position_window[track_id] = deque(maxlen=self.window_size)
-        self.position_window[track_id].append((X, Y, Z))
+        self.position_window[track_id].append((x_world, y_world, z_world))
 
-        # ── 滑动窗口速度：最旧→最新位移 / 窗口帧数 ──────────
-        # 测量基线 = window_size/fps 秒，比逐帧差分噪声低约 √window_size 倍
-        # 无冷启动从0爬升问题：窗口积累到2帧即可给出有效速度
         window = self.position_window[track_id]
         if len(window) >= 2:
             oldest = window[0]
             n_frames = len(window) - 1
-            dx = X - oldest[0]
-            dy = Y - oldest[1]
-            dz = Z - oldest[2]
-            distance_3d = np.sqrt(dx**2 + dy**2 + dz**2)
+            dx = x_world - oldest[0]
+            dy = y_world - oldest[1]
+            dz = z_world - oldest[2]
+            distance_3d = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
             raw_speed = distance_3d * self.fps / n_frames
 
-            # 轻EMA：窗口已滤大部分噪声，α=0.4 兼顾平滑与快速响应
             if track_id in self.speed_history:
-                speed_ms = (self.ema_alpha * raw_speed
-                            + (1 - self.ema_alpha) * self.speed_history[track_id])
+                speed_ms = (
+                    self.ema_alpha * raw_speed
+                    + (1 - self.ema_alpha) * self.speed_history[track_id]
+                )
             else:
                 speed_ms = raw_speed
             self.speed_history[track_id] = speed_ms
         else:
             speed_ms = 0.0
 
-        # ── 显示速度：每 display_interval 帧刷新一次 ─────────
         if track_id not in self.display_counter:
             self.display_counter[track_id] = 0
             self.display_speed_history[track_id] = 0.0
@@ -183,13 +225,12 @@ class Metric3DSpeedEstimator:
             self.display_speed_history[track_id] = speed_ms
             self.display_counter[track_id] = 0
 
-        # 前 display_delay 帧不对外输出速度（隐藏窗口积累期噪声）
         if frame_count <= self.display_delay:
             return 0.0
         return speed_ms
 
     def get_display_speed(self, track_id: int) -> float:
-        """返回视频标签用的稳定显示速度（每 display_interval 帧刷新一次）"""
+        """Return the debounced speed used for on-frame rendering."""
         if self.track_frame_count.get(track_id, 0) <= self.display_delay:
             return 0.0
         return self.display_speed_history.get(track_id, 0.0)
@@ -201,164 +242,206 @@ def process_video_metric3d(input_path: str, output_path: str,
                            show_depth: bool = True,
                            depth_frequency: int = 5,
                            model_size: str = 'small',
-                           fov_degrees: float = 60.0):
+                           fov_degrees: float = 60.0,
+                           append_timestamp: bool = True):
     """
-    Phase 3 Metric3D处理：RAFT + Metric3D v2 + YOLOv8
-    
+    Run Mode 5 with YOLOv8 + ByteTrack + RAFT + Metric3D v2.
+
     Args:
-        input_path: 输入视频
-        output_path: 输出视频
-        show_video: 是否显示窗口
-        conf_threshold: 检测阈值
-        show_depth: 是否显示深度图
-        depth_frequency: 深度估计频率（每N帧）
-        model_size: Metric3D模型大小 ('small', 'large', 'giant2')
-        fov_degrees: 相机水平视场角（度），由等效全画幅焦段换算而来
+        input_path: Input video path.
+        output_path: Output video path.
+        show_video: Whether to show the preview window.
+        conf_threshold: Detection confidence threshold.
+        show_depth: Whether to render the depth inset on the output video.
+        depth_frequency: Recompute depth every N frames.
+        model_size: Metric3D model size.
+        fov_degrees: Horizontal field of view in degrees.
+        append_timestamp: Whether to append a timestamp to the output stem.
+
+    Returns:
+        Absolute output video path on success, otherwise False.
     """
     print("=" * 60)
     print("Phase 3 Metric3D: RAFT + Metric3D v2 + YOLOv8")
     print("=" * 60)
-    
-    # 1. 初始化YOLOv8
+
     print("\n[1/4] Loading YOLOv8...")
     try:
         yolo_path = model_config.get_model_path('yolov8n.pt')
         model = YOLO(yolo_path)
         _ = model.names
-        print(f"✅ YOLOv8 loaded from {yolo_path}")
+        print(f"[OK] YOLOv8 loaded from {yolo_path}")
     except Exception as e:
         print(f"[ERROR] YOLO model loading failed: {e}")
         return False
-    
-    # 2. 初始化RAFT
+
     print("\n[2/4] Loading RAFT...")
     raft = RAFTOpticalFlow(model_type='small', device='auto')
     if not raft.is_available():
         print("[ERROR] RAFT model not available, aborting.")
         return False
-    print("✅ RAFT loaded")
-    
-    # 3. 初始化Metric3D v2
+    print("[OK] RAFT loaded")
+
     print("\n[3/4] Loading Metric3D v2...")
     depth_estimator = Metric3Dv2(model_size=model_size, device='auto')
     if not depth_estimator.is_available():
         print("[ERROR] Metric3D v2 not available, aborting.")
         return False
-    print("✅ Metric3D v2 loaded")
-    
-    # 4. 打开视频
+    print("[OK] Metric3D v2 loaded")
+
     print("\n[4/4] Opening video...")
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
-        print(f"❌ Failed to open: {input_path}")
+        print(f"[ERROR] Failed to open: {input_path}")
         return False
-    
+
     fps = float(cap.get(cv2.CAP_PROP_FPS))
     if fps <= 0:
-        print("⚠️  FPS not detected from container, defaulting to 25.0")
+        print("[WARN] FPS not detected from container, defaulting to 25.0")
         fps = 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    print(f"✅ Video: {width}x{height} @ {fps}FPS, {total_frames} frames")
-    
-    # 估算相机内参（如果没有实际内参）
-    intrinsics = depth_estimator.estimate_camera_intrinsics(width, height, fov_degrees=fov_degrees)
-    print(f"[Intrinsics] FOV={fov_degrees}°  fx={intrinsics['fx']:.1f}  fy={intrinsics['fy']:.1f}")
-    
-    # 5. 初始化输出
+
+    print(f"[OK] Video: {width}x{height} @ {fps}FPS, {total_frames} frames")
+
+    intrinsics = depth_estimator.estimate_camera_intrinsics(
+        width,
+        height,
+        fov_degrees=fov_degrees,
+    )
+    print(
+        f"[Intrinsics] FOV={fov_degrees}deg  "
+        f"fx={intrinsics['fx']:.1f}  fy={intrinsics['fy']:.1f}"
+    )
+
     run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    _op = Path(output_path)
-    output_path = str(_op.with_name(_op.stem + '_' + run_ts + _op.suffix))
+    output_path_obj = Path(output_path)
+    if append_timestamp:
+        output_path = os.path.abspath(
+            str(output_path_obj.with_name(output_path_obj.stem + '_' + run_ts + output_path_obj.suffix))
+        )
+    else:
+        output_path = os.path.abspath(str(output_path_obj))
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    print(f"[Output] {output_path}")
+
     out = get_video_writer(output_path, fps, width, height)
-    
-    # 6. 初始化估计器
+    if not out.isOpened():
+        print("[ERROR] VideoWriter could not create the output video. Check FFmpeg / MP4 support.")
+        cap.release()
+        return False
+
     speed_estimator = Metric3DSpeedEstimator(fps=fps)
-    
+
     print("\nProcessing video...")
     print("-" * 60)
-    
+
     frame_idx = 0
+    frames_written = 0
     prev_frame = None
+    prev_movable_boxes = []
     track_positions = {}
     depth_map_cache = None
+    depth_stride = max(int(depth_frequency), 1)
     csv_rows = []
     crops_dir = str(Path(output_path).with_suffix('')) + '_crops'
     os.makedirs(crops_dir, exist_ok=True)
     first_crop_paths = {}
-    
+    frame_fieldnames = [
+        'frame', 'track_id', 'class_name', 'confidence',
+        'cx', 'cy', 'x1', 'y1', 'x2', 'y2',
+        'camera_dx', 'camera_dy', 'depth_meters', 'speed_ms'
+    ]
+    object_fieldnames = [
+        'track_id', 'class_name', 'first_time_s', 'last_time_s', 'duration_s',
+        'avg_speed_ms', 'max_speed_ms', 'min_speed_ms', 'avg_depth_m',
+        'status', 'first_crop_path'
+    ]
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
+
         frame_idx += 1
-        
-        # YOLOv8检测和追踪
+
         results = model.track(frame, conf=conf_threshold, persist=True, verbose=False)
-        
-        # 计算光流和摄像头运动
+
+        current_movable_boxes = []
+        if results[0].boxes is not None and len(results[0].boxes) > 0:
+            boxes_np = results[0].boxes.xyxy.cpu().numpy()
+            class_ids_np = results[0].boxes.cls.cpu().numpy().astype(int)
+            confidences_np = results[0].boxes.conf.cpu().numpy()
+            current_movable_boxes = _collect_movable_boxes(
+                boxes_np,
+                class_ids_np,
+                confidences_np,
+                model.names,
+                conf_threshold,
+            )
+
         camera_motion = (0.0, 0.0)
         if prev_frame is not None:
-            flow = raft.compute_flow(prev_frame, frame)
-            camera_motion = raft.estimate_camera_motion(flow, method='median')
-        
-        # 深度估计（每N帧）
-        if frame_idx % depth_frequency == 1 or depth_map_cache is None:
+            flow = raft.compute_flow(prev_frame, frame, output_height=height, output_width=width)
+            camera_motion = _estimate_camera_motion_masked(
+                flow,
+                current_boxes=current_movable_boxes,
+                previous_boxes=prev_movable_boxes,
+                flow_min=0.01,
+            )
+
+        if depth_map_cache is None or (frame_idx - 1) % depth_stride == 0:
             depth_map_cache = depth_estimator.estimate_depth(frame, intrinsics)
-        
+
         prev_frame = frame.copy()
-        
-        # 绘制结果
+        prev_movable_boxes = current_movable_boxes
+
         annotated_frame = frame.copy()
-        
-        # 处理检测结果
+
         if results[0].boxes is not None and len(results[0].boxes) > 0:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             class_ids = results[0].boxes.cls.cpu().numpy().astype(int)
             confidences = results[0].boxes.conf.cpu().numpy()
-            
+
             if results[0].boxes.id is not None:
                 track_ids = results[0].boxes.id.cpu().numpy().astype(int)
             else:
                 track_ids = np.arange(len(boxes))
-            
-            for i, (box, class_id, conf, track_id) in enumerate(zip(boxes, class_ids, confidences, track_ids)):
+
+            for box, class_id, conf, track_id in zip(boxes, class_ids, confidences, track_ids):
                 x1, y1, x2, y2 = box.astype(int)
                 class_name = model.names[class_id]
-                
-                # 当前中心
+
                 cx = (x1 + x2) / 2
                 cy = (y1 + y2) / 2
-                
-                # 获取物体深度（米！）
+
                 depth_meters = depth_estimator.get_object_depth(depth_map_cache, (x1, y1, x2, y2))
-                
-                # 计算3D速度（滑动窗口内部处理首帧，无需外部守卫）
+
                 prev_pos_2d = track_positions.get(track_id)
                 speed = speed_estimator.calculate_3d_speed(
                     track_id=track_id,
                     current_pos_2d=(cx, cy),
-                    current_depth=depth_meters,  # 真实深度（米）
+                    current_depth=depth_meters,
                     camera_motion_2d=camera_motion,
                     intrinsics=intrinsics,
-                    frame_idx=frame_idx
+                    frame_idx=frame_idx,
                 )
-                
+
                 if track_id not in track_positions:
                     pad = 8
-                    crop = frame[max(0, y1-pad):min(height, y2+pad),
-                                 max(0, x1-pad):min(width, x2+pad)]
+                    crop = frame[max(0, y1 - pad):min(height, y2 + pad),
+                                 max(0, x1 - pad):min(width, x2 + pad)]
                     crop_name = f"track_{track_id}_{class_name}.jpg"
                     crop_path = os.path.join(crops_dir, crop_name)
-                    cv2.imwrite(crop_path, crop)
-                    first_crop_paths[track_id] = crop_path
+                    if crop.size > 0:
+                        cv2.imwrite(crop_path, crop)
+                    first_crop_paths[track_id] = f"crops/{crop_name}"
 
                 track_positions[track_id] = (cx, cy)
                 display_speed = speed_estimator.get_display_speed(track_id)
-                
                 smooth_depth = speed_estimator.depth_history.get(track_id, depth_meters)
+
                 csv_rows.append({
                     'frame': frame_idx,
                     'track_id': int(track_id),
@@ -366,111 +449,142 @@ def process_video_metric3d(input_path: str, output_path: str,
                     'confidence': round(float(conf), 4),
                     'cx': round(float(cx), 1),
                     'cy': round(float(cy), 1),
-                    'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                    'x1': x1,
+                    'y1': y1,
+                    'x2': x2,
+                    'y2': y2,
                     'camera_dx': round(float(camera_motion[0]), 3),
                     'camera_dy': round(float(camera_motion[1]), 3),
                     'depth_meters': round(float(smooth_depth), 3),
                     'speed_ms': round(float(speed), 3),
-                    'speed_kmh': round(float(speed * 3.6), 3),
                 })
-                
-                # 绘制边界框（颜色根据深度）
-                # 深度越近越绿，越远越红
+
                 if depth_meters > 0:
-                    depth_color_val = min(255, int(depth_meters / 30.0 * 255))  # 30米为最远
+                    depth_color_val = min(255, int(depth_meters / 30.0 * 255))
                     color = (0, 255 - depth_color_val, depth_color_val)
                 else:
                     color = (128, 128, 128)
-                
+
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
-                
-                # 计算像素速度（修复：使用保存的上一帧位置，而非已更新的当前位置）
+
                 pixel_speed = 0.0
                 if prev_pos_2d is not None:
                     prev_cx, prev_cy = prev_pos_2d
                     real_dx = (cx - prev_cx) - camera_motion[0]
                     real_dy = (cy - prev_cy) - camera_motion[1]
-                    pixel_speed = np.sqrt(real_dx**2 + real_dy**2)
-                
+                    pixel_speed = np.sqrt(real_dx ** 2 + real_dy ** 2)
+
                 if display_speed > 0:
-                    label = f"ID{track_id} {class_name} (conf:{conf:.2f}) {pixel_speed:.1f}px/f | {display_speed:.1f}m/s | {smooth_depth:.1f}m"
+                    label = (
+                        f"ID{track_id} {class_name} (conf:{conf:.2f}) "
+                        f"{pixel_speed:.1f}px/f | {display_speed:.1f}m/s | {smooth_depth:.1f}m"
+                    )
                 else:
                     label = f"ID{track_id} {class_name} (conf:{conf:.2f}) | {smooth_depth:.1f}m"
-                
-                # ✅ 更美观的字体
+
                 font = cv2.FONT_HERSHEY_DUPLEX
                 font_scale = 0.6
                 thickness = 2
                 (label_w, label_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
                 cv2.rectangle(annotated_frame, (x1, y1 - label_h - 10), (x1 + label_w + 6, y1), color, -1)
-                
-                # ✅ 文字加黑色描边（更清晰）
-                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
-                           font, font_scale, (0, 0, 0), thickness + 2)  # 黑色描边
-                cv2.putText(annotated_frame, label, (x1 + 3, y1 - 5),
-                           font, font_scale, (255, 255, 255), thickness)  # 白色文字
-        
-        # 显示深度图
-        if show_depth and frame_idx % depth_frequency == 1:
+                cv2.putText(
+                    annotated_frame,
+                    label,
+                    (x1 + 3, y1 - 5),
+                    font,
+                    font_scale,
+                    (0, 0, 0),
+                    thickness + 2,
+                )
+                cv2.putText(
+                    annotated_frame,
+                    label,
+                    (x1 + 3, y1 - 5),
+                    font,
+                    font_scale,
+                    (255, 255, 255),
+                    thickness,
+                )
+
+        if show_depth and depth_map_cache is not None and (frame_idx - 1) % depth_stride == 0:
             depth_vis = depth_estimator.visualize_depth(depth_map_cache, max_depth=50.0)
             depth_small = cv2.resize(depth_vis, (width // 4, height // 4))
-            annotated_frame[10:10+height//4, width-width//4-10:width-10] = depth_small
-            cv2.putText(annotated_frame, "Metric3D (meters)", (width-width//4-10, height//4+25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-        
-        # ✅ 优化信息面板颜色
-        panel_color = (0, 200, 200)  # 深青色
-        cv2.putText(annotated_frame, f"Frame: {frame_idx}/{total_frames} | Metric3D v2 + RAFT",
-                   (10, 30), cv2.FONT_HERSHEY_DUPLEX, 0.7, panel_color, 2)
-        cv2.putText(annotated_frame, f"Camera: dx={camera_motion[0]:.1f} dy={camera_motion[1]:.1f}",
-                   (10, height - 10), cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 255), 2)
-        
-        # 写入和显示
-        out.write(annotated_frame)
+            annotated_frame[10:10 + height // 4, width - width // 4 - 10:width - 10] = depth_small
+            cv2.putText(
+                annotated_frame,
+                'Metric3D (meters)',
+                (width - width // 4 - 10, height // 4 + 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
+                2,
+            )
+
+        panel_color = (0, 200, 200)
+        cv2.putText(
+            annotated_frame,
+            f"Frame: {frame_idx}/{total_frames} | Metric3D v2 + RAFT",
+            (10, 30),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.7,
+            panel_color,
+            2,
+        )
+        cv2.putText(
+            annotated_frame,
+            f"Camera: dx={camera_motion[0]:.1f} dy={camera_motion[1]:.1f}",
+            (10, height - 10),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.6,
+            (0, 255, 255),
+            2,
+        )
+
+        frame_out = np.ascontiguousarray(annotated_frame)
+        if _safe_cv2_write(out, frame_out):
+            frames_written += 1
         if show_video:
             cv2.imshow('Phase 3 Metric3D: RAFT + Metric3D v2 + YOLOv8', annotated_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-        
+
         if frame_idx % 30 == 0:
             if total_frames > 0:
-                print(f"Progress: {frame_idx/total_frames*100:.1f}% ({frame_idx}/{total_frames})", end='\r')
+                print(f"Progress: {frame_idx / total_frames * 100:.1f}% ({frame_idx}/{total_frames})", end='\r')
             else:
                 print(f"Progress: {frame_idx} frames processed", end='\r')
-    
+
     cap.release()
     out.release()
     if show_video:
         cv2.destroyAllWindows()
-    
-    if csv_rows:
-        base_csv = str(Path(output_path).with_suffix(''))
 
-        # ── CSV 1: 逐帧数据（每行=一帧×一辆车）──────────────────
+    base_csv = str(Path(output_path).with_suffix(''))
+    if csv_rows:
         frames_csv_path = base_csv + '_frames.csv'
         write_csv_with_header(
             frames_csv_path,
             fieldnames=list(csv_rows[0].keys()),
             rows=csv_rows,
             header_lines=[
-                "mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)",
-                "unit: speed_ms = m/s, speed_kmh = km/h; depth_meters = absolute depth from Metric3D v2 (meters)",
-                "camera_dx/dy: camera motion (pixels/frame); speed: object speed after motion compensation (m/s)",
-            ]
+                'mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)',
+                'unit: speed_ms = m/s; depth_meters = absolute depth from Metric3D v2 (meters)',
+                'camera_dx/dy: masked camera motion (pixels/frame, movable objects and tiny flow excluded)',
+                'speed: object speed after camera-motion compensation (m/s)',
+            ],
         )
         print(f"[CSV] Per-frame: {frames_csv_path} ({len(csv_rows)} rows)")
 
-        # ── CSV 2: 按车辆汇总（每行=一辆车的统计）────────────────
         vehicle_data = defaultdict(list)
         for row in csv_rows:
             vehicle_data[row['track_id']].append(row)
 
-        MOVING_THRESHOLD_MS = 0.5  # m/s：行走阈值（行人约1m/s）
+        moving_threshold_ms = 0.5
         object_rows = []
         for tid, rows in sorted(vehicle_data.items()):
-            moving = [r for r in rows if r['speed_ms'] > MOVING_THRESHOLD_MS]
-            speeds_ms = [r['speed_ms'] for r in moving] if moving else []
-            depths = [r['depth_meters'] for r in rows if r['depth_meters'] > 0]
+            moving = [row for row in rows if row['speed_ms'] > moving_threshold_ms]
+            speeds_ms = [row['speed_ms'] for row in moving] if moving else []
+            depths = [row['depth_meters'] for row in rows if row['depth_meters'] > 0]
             avg_speed = round(sum(speeds_ms) / len(speeds_ms), 3) if speeds_ms else None
             max_speed = round(max(speeds_ms), 3) if speeds_ms else None
             min_speed = round(min(speeds_ms), 3) if speeds_ms else None
@@ -484,7 +598,7 @@ def process_video_metric3d(input_path: str, output_path: str,
                 'max_speed_ms': max_speed,
                 'min_speed_ms': min_speed,
                 'avg_depth_m': round(sum(depths) / len(depths), 2) if depths else 0.0,
-                'status': 'moving' if speeds_ms and max(speeds_ms) > MOVING_THRESHOLD_MS else 'unknown',
+                'status': 'moving' if speeds_ms and max(speeds_ms) > moving_threshold_ms else 'unknown',
                 'first_crop_path': first_crop_paths.get(tid, ''),
             })
 
@@ -494,39 +608,97 @@ def process_video_metric3d(input_path: str, output_path: str,
             fieldnames=list(object_rows[0].keys()),
             rows=object_rows,
             header_lines=[
-                "mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)",
-                "unit: avg_speed_ms = m/s (avg of moving frames); avg_depth_m = meters",
-                "status: moving if max_speed_ms > 0.5 m/s (~1.8 km/h), else unknown (no detected motion)",
-            ]
+                'mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)',
+                'unit: speed_ms = m/s (object speed after camera-motion compensation)',
+            ],
         )
         print(f"[CSV] Per-object: {objects_csv_path} ({len(object_rows)} objects)")
-    
+    else:
+        frames_csv_path = base_csv + '_frames.csv'
+        write_csv_with_header(
+            frames_csv_path,
+            fieldnames=frame_fieldnames,
+            rows=[],
+            header_lines=[
+                'mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)',
+                'unit: speed_ms = m/s; depth_meters = absolute depth from Metric3D v2 (meters)',
+                'camera_dx/dy: masked camera motion (pixels/frame, movable objects and tiny flow excluded)',
+                'speed: object speed after camera-motion compensation (m/s)',
+            ],
+        )
+        objects_csv_path = base_csv + '_objects.csv'
+        write_csv_with_header(
+            objects_csv_path,
+            fieldnames=object_fieldnames,
+            rows=[],
+            header_lines=[
+                'mode: 5 | algorithm: YOLOv8 + ByteTrack + RAFT + Metric3D v2 (absolute depth)',
+                'unit: speed_ms = m/s (object speed after camera-motion compensation)',
+            ],
+        )
+        print(f"[CSV] Per-frame: {frames_csv_path} (0 rows)")
+        print(f"[CSV] Per-object: {objects_csv_path} (0 objects)")
+
+    if frame_idx == 0:
+        print('[ERROR] No frames were read from the input video')
+        return False
+
+    if frames_written == 0:
+        print('[ERROR] No video frames were written; check OpenCV VideoWriter / FFmpeg')
+        return False
+    if not os.path.isfile(output_path):
+        print(f"[ERROR] Expected output video is missing: {output_path}")
+        return False
+
+    size_bytes = os.path.getsize(output_path)
+    if size_bytes < 1024:
+        print(
+            f"[ERROR] Output video is suspiciously small ({size_bytes} bytes); encoding may have failed. "
+            'Please check FFmpeg / VideoWriter availability and retry.'
+        )
+        return False
+
     print(f"\n{'=' * 60}")
-    print(f"✅ Phase 3 Metric3D Processing Complete!")
-    print(f"📹 Output: {output_path}")
-    print(f"🎯 Processed {frame_idx} frames")
+    print('[OK] Phase 3 Metric3D processing complete')
+    print(f"[Output] {output_path}")
+    print(f"[Summary] Processed {frame_idx} frames (video frames written: {frames_written})")
     print(f"{'=' * 60}")
-    
-    return True
+
+    return output_path
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Phase 3 Metric3D: RAFT + Metric3D v2 + YOLOv8')
     parser.add_argument('--input', type=str, default='input/test_video.mp4')
     parser.add_argument('--output', type=str, default='output/phase3_metric3d_output.mp4')
     parser.add_argument('--conf', type=float, default=0.25)
     parser.add_argument('--no-show', action='store_true')
     parser.add_argument('--no-depth', action='store_true')
-    parser.add_argument('--depth-freq', type=int, default=5,
-                       help='Depth estimation frequency (every N frames)')
-    parser.add_argument('--model-size', type=str, default='small',
-                       choices=['small', 'large', 'giant2'],
-                       help='Metric3D model size')
-    
+    parser.add_argument(
+        '--fov',
+        type=float,
+        default=60.0,
+        help='Horizontal field of view in degrees',
+    )
+    parser.add_argument(
+        '--depth-freq',
+        type=int,
+        default=5,
+        help='Depth estimation frequency (every N frames)',
+    )
+    parser.add_argument(
+        '--model-size',
+        type=str,
+        default='small',
+        choices=['small', 'large', 'giant2'],
+        help='Metric3D model size',
+    )
+
     args = parser.parse_args()
-    
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    
+
+    output_dir = os.path.dirname(args.output) or '.'
+    os.makedirs(output_dir, exist_ok=True)
+
     success = process_video_metric3d(
         input_path=args.input,
         output_path=args.output,
@@ -534,11 +706,13 @@ if __name__ == "__main__":
         conf_threshold=args.conf,
         show_depth=not args.no_depth,
         depth_frequency=args.depth_freq,
-        model_size=args.model_size
+        model_size=args.model_size,
+        fov_degrees=args.fov,
     )
-    
+
     if success:
-        print("\n✅ Done!")
+        print('\n[OK] Done!')
     else:
-        print("\n❌ Failed!")
+        print('\n[ERROR] Failed!')
         sys.exit(1)
+

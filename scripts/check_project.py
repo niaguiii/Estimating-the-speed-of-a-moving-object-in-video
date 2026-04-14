@@ -56,7 +56,8 @@ def check_core_modules():
         ("src/mode3_raft_optical_flow.py", "Mode 3: RAFT光流"),
         ("src/mode4_depth_anything_v2.py", "Mode 4: Depth Anything V2"),
         ("src/mode5_metric3d_v2.py", "Mode 5: Metric3D v2"),
-        ("src/mode6_ego_speed.py", "Mode 6: 自车测速"),
+        ("src/mode6_ego_speed_v2.py", "Mode 6: 自车测速（当前主实现）"),
+        ("src/mode6_ego_speed.py", "Mode 6: 自车测速（legacy）"),
         ("src/optical_flow_raft.py", "RAFT光流封装"),
         ("src/depth_estimation.py", "Depth Anything V2封装"),
         ("src/depth_estimation_metric3d.py", "Metric3D v2封装"),
@@ -94,7 +95,8 @@ def check_web_modules():
         ("web/frontend/src/components/VideoUpload.vue", "上传组件"),
         ("web/frontend/src/components/ModeSelector.vue", "模式选择组件"),
         ("web/frontend/src/components/ProgressBar.vue", "进度条组件"),
-        ("web/frontend/src/components/ResultDisplay.vue", "结果展示组件"),
+        ("web/frontend/src/components/ResultDisplayV2.vue", "结果展示组件（当前主实现）"),
+        ("web/frontend/src/components/ResultDisplay.vue", "结果展示组件（legacy）"),
     ]
     
     all_exist = True

@@ -39,8 +39,8 @@ web/
 ├── README.md               # 本文件
 │
 ├── backend/                # Python FastAPI 后端（端口8000）
-│   ├── app.py             # 服务器主程序
-│   ├── process_worker.py  # 处理worker进程
+│   ├── app.py             # 服务器主程序（异步提交任务）
+│   ├── process_worker.py  # 处理worker进程（独立子进程，可终止）
 │   └── requirements.txt   # Python依赖
 │
 └── frontend/               # Vue 3 + Vite 前端（端口3000）
@@ -58,8 +58,9 @@ web/
         └── components/
             ├── VideoUpload.vue      # 上传组件
             ├── ModeSelector.vue     # 模式选择组件
-            ├── ProgressBar.vue     # 进度显示组件
-            └── ResultDisplay.vue    # 结果显示组件
+            ├── ProgressBar.vue      # 进度显示组件
+            ├── ResultDisplay.vue    # 通用结果显示组件（legacy）
+            └── ResultDisplayV2.vue  # 当前结果显示组件（支持 Mode 6 双CSV与诊断图）
 ```
 
 **数据存储：** 上传视频存储在项目根目录的 `data/web/uploads/`，处理结果存储在 `data/web/outputs/`（由后端自动创建）
@@ -75,7 +76,7 @@ web/
 - **实时进度**：百分比、耗时、状态更新
 - **连接监控**：实时后端连接状态指示
 - **错误检测**：自动错误反馈和恢复
-- **结果下载**：在线预览或下载处理后的视频
+- **结果下载**：在线预览或下载处理后的视频、CSV 与诊断图
 
 ---
 
@@ -105,6 +106,45 @@ web/
 - 下载处理后的视频
 - 处理下一个视频
 
+### Mode 5 / Mode 6 输出规范
+
+Web 后端内部固定使用任务 ID 命名，便于轮询、历史记录和下载：
+
+- 视频：`data/web/outputs/{task_id}_output.mp4`
+- Mode 5 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_objects.csv`
+- Mode 6 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_stats.csv`
+- 图片目录：
+  - Mode 5：`{task_id}_output_crops/`
+  - Mode 6：`{task_id}_output_diagnostics/`
+
+用户实际下载时，浏览器看到的文件名会更友好：
+
+- Mode 5 视频：`mode5_result_{task_id}.mp4`
+- Mode 6 视频：`mode6_result_{task_id}.mp4`
+- Mode 5 ZIP：`mode5_data_{task_id}.zip`
+- Mode 6 ZIP：`mode6_data_{task_id}.zip`
+
+ZIP 内部统一包含：
+
+- `processed_video.mp4`
+- 对应 CSV 文件
+- `crops/` 或 `diagnostics/` 目录
+
+其中：
+
+- `Mode 5` 的 `crops/` 是目标截图目录
+- `Mode 6` 的 `diagnostics/` 是诊断图目录
+
+`Mode 6` 默认每 `20` 帧导出一组诊断图，每组 `3` 张：
+
+- `frame_000020_valid_mask_overlay.png`
+- `frame_000020_valid_mask_binary.png`
+- `frame_000020_flow_visualization.png`
+
 ---
 
 ## 🔧 技术细节
@@ -112,12 +152,13 @@ web/
 ### 后端（端口8000）
 - **语言**：Python
 - **框架**：FastAPI
-- **处理方式**：多线程后台任务
+- **处理方式**：提交任务后立即返回 `task_id`，由独立 worker 子进程后台处理
 - **API接口**：
   - `POST /api/upload` - 上传视频
-  - `POST /api/process` - 开始处理
+  - `POST /api/process` - 开始处理并立即返回 `task_id`
   - `GET /api/task/{id}` - 查询进度
   - `GET /api/download/{id}` - 下载结果
+  - `GET /api/download-zip/{id}` - 下载完整结果包
   - `GET /api/history` - 查看历史
   - `GET /docs` - API文档
 

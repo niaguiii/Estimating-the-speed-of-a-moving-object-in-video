@@ -14,6 +14,7 @@ __all__ = [
     'mode3_raft_optical_flow',
     'mode4_depth_anything_v2',
     'mode5_metric3d_v2',
+    'mode6_ego_speed_v2',
     'mode6_ego_speed',
     'optical_flow_raft',
     'depth_estimation',

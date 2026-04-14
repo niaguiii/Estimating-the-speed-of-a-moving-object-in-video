@@ -16,6 +16,8 @@ except ImportError:
     import model_config
 
 # 现在才导入torch和相关库
+import math
+import types
 import torch
 import cv2
 import numpy as np
@@ -64,6 +66,7 @@ class Metric3Dv2:
                 pretrain=True,
                 trust_repo=True
             )
+            self._patch_cpu_compatibility()
             self.model = self.model.to(self.device)
             self.model.eval()
             self._available = True
@@ -83,6 +86,56 @@ class Metric3Dv2:
         """检查模型是否已成功加载"""
         return getattr(self, '_available', False)
         
+    def _patch_cpu_compatibility(self):
+        """Patch upstream Metric3D modules that hardcode CUDA-only tensors."""
+        if self.model is None or self.device.type != 'cpu':
+            return
+
+        patched = 0
+
+        for module in self.model.modules():
+            if hasattr(module, 'get_bins'):
+                def _get_bins(this, bins_num, _device=self.device):
+                    depth_bins_vec = torch.linspace(
+                        math.log(this.min_val),
+                        math.log(this.max_val),
+                        bins_num,
+                        device=_device,
+                    )
+                    return torch.exp(depth_bins_vec)
+
+                module.get_bins = types.MethodType(_get_bins, module)
+                patched += 1
+
+            if hasattr(module, 'create_mesh_grid'):
+                def _create_mesh_grid(
+                    this,
+                    height,
+                    width,
+                    batch,
+                    device=None,
+                    set_buffer=True,
+                    _device=self.device,
+                ):
+                    actual_device = device if device is not None else _device
+                    if isinstance(actual_device, str):
+                        actual_device = torch.device(actual_device)
+                    y, x = torch.meshgrid(
+                        [
+                            torch.arange(0, height, dtype=torch.float32, device=actual_device),
+                            torch.arange(0, width, dtype=torch.float32, device=actual_device),
+                        ],
+                        indexing='ij',
+                    )
+                    meshgrid = torch.stack((x, y))
+                    return meshgrid.unsqueeze(0).repeat(batch, 1, 1, 1)
+
+                module.create_mesh_grid = types.MethodType(_create_mesh_grid, module)
+                patched += 1
+
+        if patched:
+            print(f"[Metric3D] Applied {patched} CPU compatibility patch(es)")
+
     def set_camera_intrinsics(self, fx: float, fy: float, cx: float, cy: float):
         """
         设置相机内参

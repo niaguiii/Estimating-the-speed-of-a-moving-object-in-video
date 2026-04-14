@@ -214,9 +214,9 @@ def detect_haze(frames: List[np.ndarray]) -> Tuple[float, str]:
     # 阈值（收紧 — 暗通道先验极易被阴影、深色场景、阴天误触发，
     # 大幅提高门槛，只在雾霾极明显时才判为 foggy，避免误增强正常视频）
     # 典型值参考：晴朗户外 < 40，阴天/阴影 40-80，轻雾 80-120，明显雾霾 > 120
-    if haze_index > 120:
+    if haze_index > 130:
         haze_level = "foggy"
-    elif haze_index > 80:
+    elif haze_index > 100:
         haze_level = "mild"
     else:
         haze_level = "clear"

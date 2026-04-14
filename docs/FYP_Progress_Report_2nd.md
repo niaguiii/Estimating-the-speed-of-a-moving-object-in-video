@@ -92,7 +92,7 @@ ByteTrack replaced SimpleTracker to achieve better tracking performance. The alg
 
 **3.2 Speed Estimation System**
 
-The speed estimation system uses object size-based calibration with standard sizes (car: 4.5m, person: 1.7m, truck: 12m) to automatically calculate pixel-to-meter ratios. It tracks object centroid movement and converts pixel displacement to real-world distance, calculating speed as distance/time. An Exponential Moving Average (α=0.3) smoothing algorithm eliminates jitter. The system displays speed in km/h and m/s with max/average statistics for each object.
+The speed estimation system uses object size-based calibration with standard sizes (car: 4.5m, person: 1.7m, truck: 12m) to automatically calculate pixel-to-meter ratios. It tracks object centroid movement and converts pixel displacement to real-world distance, calculating speed as distance/time. An Exponential Moving Average (α=0.3) smoothing algorithm eliminates jitter. The system displays speed in m/s with max/average statistics for each object.
 
 **3.3 Key Achievements**
 

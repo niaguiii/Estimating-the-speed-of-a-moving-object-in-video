@@ -9,7 +9,7 @@ import argparse
 import sys
 import urllib.request
 
-from enhance_video import get_video_writer
+from src.enhance_video import get_video_writer
 
 class OpenCVObjectDetector:
     def __init__(self):

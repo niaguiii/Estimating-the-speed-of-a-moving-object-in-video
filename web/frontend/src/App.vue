@@ -41,7 +41,7 @@ import { ref } from 'vue'
 import VideoUpload from './components/VideoUpload.vue'
 import ModeSelector from './components/ModeSelector.vue'
 import ProgressBar from './components/ProgressBar.vue'
-import ResultDisplay from './components/ResultDisplay.vue'
+import ResultDisplay from './components/ResultDisplayV2.vue'
 
 const currentStep = ref('upload')
 const videoId = ref('')

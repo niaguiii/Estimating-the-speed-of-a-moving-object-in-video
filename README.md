@@ -1,6 +1,6 @@
 # DynamiSee——视频速度估计系统
 
-> 基于深度学习的单摄像头全自动速度估计 — 支持测外部物体速度（Mode 5）和摄像头自身速度（Mode 6），覆盖固定/移动视角多种场景
+> 基于深度学习的单摄像头全自动速度估计 — 支持测外部物体速度（Mode 5）和摄像头自身速度（Mode 6），覆盖固定/移动视角多种场景，**速度单位统一为 m/s**
 
 **[本文档 README.md]** — 项目概述、快速开始、功能演示、模式选择指南
 
@@ -35,16 +35,16 @@
 本项目开发一个**通用视频速度估计系统**，提供两种测速能力：
 
 - **物体速度（Mode 5）** — YOLOv8 检测 + ByteTrack 追踪 + RAFT 光流补偿摄像头运动 + Metric3D 绝对深度，测外部物体相对于地面的真实速度
-- **自身速度（Mode 6）** — 纯光流 + 深度，无需检测任何目标，直接测出携带设备的移动速度
+- **自身速度（Mode 6）** — 全图 RAFT 光流 + Metric3D 绝对深度 + YOLO 动态目标掩码，直接测出携带设备的有符号前后向速度
 - **双模式覆盖** — 固定摄像头、移动手持、车载、无人机等任意场景
 
 ## ✨ 特性亮点
 
 - 🎯 **YOLOv8 检测** — 80+ 类物体检测（人、车、卡车、自行车等）
 - 🎯 **ByteTrack 追踪** — 卡尔曼滤波 + 两阶段匹配，追踪精度 80-90%
-- 🌊 **RAFT 光流** — 分离摄像头运动，支持移动摄像头（Mode 3/4/5）
+- 🌊 **RAFT 光流** — 分离摄像头运动，支持移动摄像头（Mode 3/4/5），并为 Mode 6 提供原生分辨率全图光流
 - 📏 **绝对深度估计** — Metric3D v2 单目绝对深度，无需标定，精度 ±2-5%（Mode 5）
-- 🚶 **自车测速** — 纯光流 + 深度，无需 YOLO，测设备自身移动速度（Mode 6）
+- 🚶 **自车测速** — 全图静态背景光流 + Metric3D 深度 + YOLO 动态掩码，测设备自身移动速度（Mode 6）
 - 📊 **双模式界面** — CLI 命令行 + Web 图形界面
 - 🛡️ **视频质量增强** — 自动检测模糊/雾气/亮度，自适应预处理
 
@@ -82,7 +82,7 @@
 │   └── [√] 追踪精度 80-90%
 ├── [√] ⚡ 简化版速度估算（基于物体尺寸）
 │   ├── [√] 自动像素/米标定（车、人、卡车等）
-│   ├── [√] 实时速度显示（km/h）
+│   ├── [√] 实时速度显示（m/s）
 │   ├── [√] EMA速度平滑算法
 │   └── [√] 速度统计面板（最大/平均）
 └── [√] 📈 统一入口整合（main.py）
@@ -125,14 +125,14 @@
 
 ✅ 第五阶段 - 自车测速扩展 ✅ 已完成
 └── [√] 🚶 移动视角自车测速（Mode 6）
-    ├── [√] 路面特征点光流采样（不依赖YOLO）
-    ├── [√] Metric3D全图深度 + 路面采样点测速
+    ├── [√] 全图 RAFT 光流 + 原生分辨率（native）推理
+    ├── [√] YOLO 动态目标掩码 + 低可观测区域过滤
     ├── [√] 双阶段EMA平滑 + 冷启动抑制 + 3σ异常抑制
     ├── [√] 自车速度输出，适配手持/行走/行车记录仪等移动视角
-    └── [√] 双CSV（逐帧 + 按秒汇总含累计位移）
+    └── [√] 双CSV + 诊断快照（每20帧一组）
 ```
 
-**最后更新时间：2026-04-02**
+**最后更新时间：2026-04-14**
 
 ---
 
@@ -140,14 +140,14 @@
 
 ## 🎮 六种处理模式
 
-| 模式 | 名称 | 适用场景 | 速度精度 | 需要GPU |
+| 模式 | 名称 | 适用场景 | 速度精度 | GPU建议 |
 |------|------|---------|---------|--------|
 | **1** | 检测+追踪 | 固定摄像头，仅需追踪 | — | ❌ |
 | **2** | 速度估算 | 固定摄像头，需要速度 | 中等 | ❌ |
-| **3** | RAFT光流 | 移动摄像头（车载/手持） | 中等 | ✅ |
-| **4** | 相对深度 | 移动摄像头+深度信息 | 较高 | ✅ |
-| **5** | 绝对深度 🔥 | 通用场景，测外部物体最高精度 | ±2-5% | ✅ |
-| **6** | 自车测速 | 手持/行车记录仪，测设备自身速度 | 较高 | ✅ |
+| **3** | RAFT光流 | 移动摄像头（车载/手持） | 中等 | 推荐 |
+| **4** | 相对深度 | 移动摄像头+深度信息 | 较高 | 推荐 |
+| **5** | 绝对深度 🔥 | 通用场景，测外部物体最高精度 | ±2-5% | 推荐 |
+| **6** | 自车测速 | 手持/行车记录仪，测设备自身速度 | 较高 | 推荐 |
 
 > 💡 详细技术说明（论文原理、算法细节）→ [docs/TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md)
 
@@ -184,7 +184,7 @@ YOLOv8 物体检测 + ByteTrack 多目标追踪，追踪 ID 可视化，轨迹�
 
 **模式2 — 速度估算**
 
-模式1 全部功能 + 基于物体尺寸的速度估算，自动识别车辆类型并标定，实时显示 km/h。
+模式1 全部功能 + 基于物体尺寸的速度估算，自动识别车辆类型并标定，实时显示 m/s。
 
 **模式3 — RAFT光流**
 
@@ -196,11 +196,11 @@ YOLOv8 物体检测 + ByteTrack 多目标追踪，追踪 ID 可视化，轨迹�
 
 **模式5 — 绝对深度测速（推荐）🔥**
 
-模式3 全部功能 + **Metric3D v2 绝对深度估计**（直接输出米数，无需标定）+ RAFT 光流补偿摄像头运动 + 3D 空间速度计算，精度 ±2-5%。支持移动摄像头场景。输出真实世界速度 (km/h)，双 CSV 导出。
+模式3 全部功能 + **Metric3D v2 绝对深度估计**（直接输出米数，无需标定）+ RAFT 光流补偿摄像头运动 + 3D 空间速度计算，精度 ±2-5%。支持移动摄像头场景。输出真实世界速度 (m/s)，双 CSV 导出。
 
 **模式6 — 自车测速**
 
-纯光流 + Metric3D 深度，无需 YOLO 检测目标。采样画面底部路面特征点，结合竖直光流分量与深度计算设备自身移动速度。适配手持/行走/行车记录仪等移动视角，输出有符号速度（前进/倒车）。
+全图 RAFT 光流 + Metric3D 绝对深度 + YOLO 动态目标掩码。对全图静态背景像素做有效性过滤（动态目标、低可观测区域、无效深度、主点附近退化区），再按逐像素前后向速度取中位数并做双阶段 EMA 平滑。Mode 6 默认使用原生分辨率（native）光流，适配手持/行走/行车记录仪等移动视角，输出有符号速度（前进/后退）。
 
 ---
 
@@ -232,7 +232,7 @@ YOLOv8 物体检测 + ByteTrack 多目标追踪，追踪 ID 可视化，轨迹�
                           3D速度计算
                               ↓
               ┌──────────────────────────┐
-              │  输出：视频 + CSV + 截图   │
+              │  输出：视频 + CSV + 截图/诊断图 │
               └──────────────────────────┘
 ```
 
@@ -250,7 +250,7 @@ YOLOv8 物体检测 + ByteTrack 多目标追踪，追踪 ID 可视化，轨迹�
 | 1280×720 | 8-10 FPS | 3-6 FPS | 1-3 FPS | ~400MB |
 | 1920×1080 | 5-6 FPS | 2-4 FPS | 1-2 FPS | ~600MB |
 
-*注：模式1-2 为 CPU 性能；GPU 可提升 3-5 倍。模式5/6 需要 GPU。*
+*注：模式1-2 为 CPU 性能；GPU 可提升 3-5 倍。模式5/6 推荐使用 GPU，但 CPU 环境也可运行，只是速度会明显更慢。*
 
 ### 精度对比
 
@@ -390,7 +390,7 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 │       ├── uploads/           # Web 上传视频（后端自动创建）
 │       └── outputs/           # Web 处理结果（后端自动创建）
 │
-├── 📂 src/                    # 核心源代码（15 个 .py 文件）
+├── 📂 src/                    # 核心源代码（16 个 .py 文件）
 │   ├── __init__.py            # 模块初始化，导出所有核心接口
 │   ├── model_config.py        # 模型下载路径管理（必须最先 import）
 │   │
@@ -399,9 +399,10 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 │   ├── mode3_raft_optical_flow.py    # Mode 3: RAFT 光流 + 摄像头运动补偿
 │   ├── mode4_depth_anything_v2.py    # Mode 4: Depth Anything V2 相对深度感知
 │   ├── mode5_metric3d_v2.py          # Mode 5: Metric3D v2 绝对度量深度（推荐）
-│   ├── mode6_ego_speed.py            # Mode 6: 路面光流自车速度估算（无需 YOLO）
+│   ├── mode6_ego_speed_v2.py         # Mode 6: 全图静态背景自车速度估算（当前主实现）
+│   ├── mode6_ego_speed.py            # Mode 6: 旧版路面光流实现（legacy）
 │   │
-│   ├── optical_flow_raft.py           # RAFT 稠密光流封装（Mode 3-6 共享）
+│   ├── optical_flow_raft.py           # RAFT 稠密光流封装（Mode 3-6 共享；Mode 6 默认 native）
 │   ├── depth_estimation.py            # Depth Anything V2 封装（Mode 4）
 │   ├── depth_estimation_metric3d.py   # Metric3D v2 封装（Mode 5-6）
 │   │
@@ -434,7 +435,7 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 ├── 📂 web/                   # Web 应用
 │   ├── backend/              # FastAPI 后端
 │   │   ├── app.py           # 主程序（上传 / 处理 / 轮询 / 下载）
-│   │   ├── process_worker.py # 子进程 worker（可 kill）
+│   │   ├── process_worker.py # 子进程 worker（异步启动，可 kill）
 │   │   └── requirements.txt
 │   └── frontend/             # Vue 3 前端
 │       ├── src/
@@ -443,7 +444,8 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 │       │       ├── VideoUpload.vue   # 拖拽上传
 │       │       ├── ModeSelector.vue  # 模式选择
 │       │       ├── ProgressBar.vue   # 进度条
-│       │       └── ResultDisplay.vue # 结果展示
+│       │       ├── ResultDisplay.vue   # 通用结果展示（legacy）
+│       │       └── ResultDisplayV2.vue # 当前结果展示（支持 Mode 6 双CSV + 诊断图）
 │       └── package.json
 │
 └── 📂 docs/                  # 项目文档
@@ -480,6 +482,135 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 - **文档**: 8个完整文档
 - **开发周期**: 2023-2026
 
+## 📦 Mode 5 / Mode 6 输出规范
+
+### CLI 输出
+
+CLI 入口 `main.py` 会先生成基础文件名，再由 Mode 5 / Mode 6 在内部**追加时间戳**，避免重复运行覆盖旧结果。
+
+**Mode 5（外部目标测速）**
+
+- 视频：`data/cli/output/<输入名>_result_mode5_<timestamp>.mp4`
+- 逐帧 CSV：`<同 stem>_frames.csv`
+- 目标汇总 CSV：`<同 stem>_objects.csv`
+- 截图目录：`<同 stem>_crops/`
+
+`objects.csv` 中的 `first_crop_path` 使用**相对路径**，格式为：
+
+- `crops/<截图文件名>`
+
+**Mode 6（自车速度）**
+
+- 视频：`data/cli/output/<输入名>_result_mode6_<timestamp>.mp4`
+- 逐帧 CSV：`<同 stem>_frames.csv`
+- 秒级统计 CSV：`<同 stem>_stats.csv`
+- 诊断图目录：`<同 stem>_diagnostics/`
+
+### Web 端内部输出
+
+Web worker 为了配合轮询、下载和历史记录，内部固定使用任务 ID 命名，不追加时间戳：
+
+- 视频：`data/web/outputs/{task_id}_output.mp4`
+- Mode 5 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_objects.csv`
+- Mode 6 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_stats.csv`
+- 图片目录：
+  - Mode 5：`{task_id}_output_crops/`
+  - Mode 6：`{task_id}_output_diagnostics/`
+
+### Web 下载文件名
+
+用户从 Web 页面下载时，后端会返回更友好的文件名：
+
+- 单视频下载：
+  - `mode5_result_{task_id}.mp4`
+  - `mode6_result_{task_id}.mp4`
+- ZIP 下载：
+  - `mode5_data_{task_id}.zip`
+  - `mode6_data_{task_id}.zip`
+
+ZIP 内部统一打包为：
+
+- `processed_video.mp4`
+- 原始 CSV 文件名
+- `crops/` 或 `diagnostics/` 目录
+
+### CSV 与诊断图
+
+**Mode 5 `_frames.csv`**
+
+- `frame`
+- `track_id`
+- `class_name`
+- `confidence`
+- `cx`
+- `cy`
+- `x1`
+- `y1`
+- `x2`
+- `y2`
+- `camera_dx`
+- `camera_dy`
+- `depth_meters`
+- `speed_ms`
+
+**Mode 5 `_objects.csv`**
+
+- `track_id`
+- `class_name`
+- `first_time_s`
+- `last_time_s`
+- `duration_s`
+- `avg_speed_ms`
+- `max_speed_ms`
+- `min_speed_ms`
+- `avg_depth_m`
+- `status`
+- `first_crop_path`
+
+**Mode 6 `_frames.csv`**
+
+- `frame_idx`
+- `timestamp_s`
+- `ego_speed_ms`
+- `quality_flag`
+- `flow_valid_rate`
+- `valid_pixel_percent`
+- `valid_pixels`
+- `total_pixels`
+- `dx_median`
+- `raw_speed_ms`
+
+**Mode 6 `_stats.csv`**
+
+- `second`
+- `start_frame`
+- `end_frame`
+- `avg_speed_ms`
+- `max_speed_ms`
+- `min_speed_ms`
+- `displacement_m`
+- `cumulative_displacement_m`
+- `dominant_quality`
+- `avg_valid_pixel_percent`
+
+**Mode 6 诊断图**
+
+`_diagnostics/` 是 Mode 6 的诊断图目录。默认**每 20 帧导出一组**，每组 3 张：
+
+- `frame_000020_valid_mask_overlay.png`
+- `frame_000020_valid_mask_binary.png`
+- `frame_000020_flow_visualization.png`
+
+三张图分别用于查看：
+
+- 原图上的有效区域叠加
+- 有效像素二值掩码
+- 当前采样帧的光流可视化
+
 ### 最新更新
 - **日期**: 2026-04-02
 - **版本**: Phase 1-5 全部完成，支持模式1-6
@@ -494,7 +625,7 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 |---|--------|---------------|---------------|----------|
 | 1 | **移动摄像头运动分离** | 必须固定摄像头，否则无法测速 | 支持任意移动摄像头场景 | RAFT光流算法分离背景运动 |
 | 2 | **全自动深度标定** | 需要手动输入相机参数或标定 | 零配置，AI自动估计深度 | Metric Depth单目深度估计 |
-| 3 | **真实世界速度输出** | 只能输出像素速度 | 直接输出km/h、m/s真实速度 | 深度+光流联合计算 |
+| 3 | **真实世界速度输出** | 只能输出像素速度 | 直接输出 m/s 真实速度 | 深度+光流联合计算 |
 
 ---
 
@@ -552,7 +683,7 @@ Web 端配置文件位于 web/frontend/.env.production，CLI 端通过命令行�
 |------|------------|--------|
 | 摄像头要求 | 固定摄像头 | 🔥 移动/固定均支持 |
 | 标定方式 | 手动标定 | 🔥 全自动AI标定 |
-| 速度单位 | 像素/帧 | 🔥 真实速度(km/h) |
+| 速度单位 | 像素/帧 | 🔥 真实速度(m/s) |
 | 适用场景 | 单一场景 | 🔥 多场景通用 |
 | 检测物体 | 仅车辆 | 🔥 80+类物体 |
 | 外部数据 | 无 | 🔥 支持无人机数据联动 |

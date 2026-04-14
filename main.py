@@ -5,7 +5,7 @@
 核心功能:
 - YOLOv8 物体检测
 - ByteTrack 高精度追踪
-- 速度估算 (km/h)
+- 速度估算 (m/s)
 
 六种处理模式:
 1. Mode 1: 检测+追踪 (mode1_detection_tracking.py)
@@ -23,8 +23,8 @@
 5. Mode 5: Metric3D v2 (mode5_metric3d_v2.py) 
    - YOLOv8 + RAFT + Metric3D v2 (绝对深度，±2-5%，最新最好！)
 
-6. Mode 6: 自车测速 (mode6_ego_speed.py)
-   - RAFT + Metric3D v2，无需YOLO，路面光流测自车速度
+6. Mode 6: 自车测速 (mode6_ego_speed_v2.py)
+   - 全图 RAFT(native) + Metric3D v2 + YOLO 动态目标掩码
 """
 import os
 import sys
@@ -67,7 +67,7 @@ def show_menu():
     print("Core Technologies:")
     print("  - YOLOv8: Object Detection")
     print("  - ByteTrack: High-Precision Tracking")
-    print("  - Speed Estimation: Real-world Speed (km/h)")
+    print("  - Speed Estimation: Real-world Speed (m/s)")
     print("=" * 60)
 
 def select_video():
@@ -214,7 +214,7 @@ def select_model_version():
     print("")
     print("  2. Detection + Tracking + Speed Estimation")
     print("     - All features from mode 1")
-    print("     - Speed estimation (km/h)")
+    print("     - Speed estimation (m/s)")
     print("     - Assumes stationary camera")
     print("")
     print("  3. RAFT Optical Flow + Speed Estimation [Phase 3]")
@@ -235,9 +235,9 @@ def select_model_version():
     print("     - Highest accuracy (±2-5%)")
     print("     - Universal scene support")
     print("")
-    print("  6. Ego-Vehicle Speed (mode6_ego_speed.py)")
-    print("     - NO YOLO detection needed")
-    print("     - RAFT + Metric3D v2 on road surface")
+    print("  6. Ego-Vehicle Speed (mode6_ego_speed_v2.py)")
+    print("     - Full-frame RAFT + Metric3D v2")
+    print("     - YOLO dynamic-object masking")
     print("     - Measures YOUR OWN vehicle speed")
     print("     - Ideal for dashcam footage")
     print("")
@@ -275,7 +275,7 @@ def main():
     Mode 3: mode3_raft_optical_flow.py     - RAFT光流
     Mode 4: mode4_depth_anything_v2.py     - Depth Anything V2
     Mode 5: mode5_metric3d_v2.py           - Metric3D v2 (推荐)
-    Mode 6: mode6_ego_speed.py             - 自车测速
+    Mode 6: mode6_ego_speed_v2.py          - 自车测速
     """
     show_menu()
     
@@ -375,7 +375,7 @@ def main():
         'raft': 'Mode 3: RAFT Optical Flow + Speed',
         'phase3': 'Mode 4: RAFT + Depth Anything V2 (Relative Depth)',
         'metric3d': 'Mode 5: RAFT + Metric3D v2 (Absolute Depth - BEST!)',
-        'ego': 'Mode 6: Ego-Vehicle Speed (RAFT + Metric3D, No YOLO)'
+        'ego': 'Mode 6: Ego-Vehicle Speed (Full-frame RAFT + Metric3D + YOLO mask)'
     }
     
     print(f"\n" + "=" * 60)
@@ -433,6 +433,7 @@ def main():
 
     # 处理视频
     try:
+        saved_output_path = output_path
         # 根据版本导入对应模块
         if model_version == 'metric3d':
             # Mode 5: Metric3D v2 (绝对深度)
@@ -475,6 +476,9 @@ def main():
                 model_size='small',  # 可选：'small', 'large', 'giant2'
                 fov_degrees=fov_degrees
             )
+            # Mode 5 在内部为文件名追加时间戳，返回真实写入路径
+            if success:
+                saved_output_path = success
         elif model_version == 'phase3':
             # Mode 4: Depth Anything V2 (相对深度)
             from src.mode4_depth_anything_v2 import process_video_phase3
@@ -506,7 +510,7 @@ def main():
                 conf_threshold=0.25
             )
         elif model_version == 'ego':
-            # Mode 6: Ego-Vehicle Speed (no YOLO)
+            # Mode 6: Ego-Vehicle Speed (full-frame v2)
             # 询问相机焦段 → 自动换算水平视角
             print("\n[Mode 6] 请输入相机等效全画幅焦段（mm）")
             print("  常见焦段参考: 14mm(超广) 24mm(广角) 35mm(标准广) 50mm(标准) 85mm(人像) 135mm(中长)")
@@ -522,16 +526,28 @@ def main():
             fov_degrees = 2.0 * math.degrees(math.atan(18.0 / _focal_mm))
             print(f"  ✅ {_focal_mm:.0f}mm  →  水平FOV ≈ {fov_degrees:.1f}°")
 
-            from src.mode6_ego_speed import process_video_ego_speed
+            _depth_input = input("  Depth frequency (default 5): ").strip()
+            try:
+                depth_freq = int(_depth_input) if _depth_input else 5
+                if depth_freq <= 0:
+                    raise ValueError
+            except ValueError:
+                print("  [WARN] Invalid depth frequency, using default 5")
+                depth_freq = 5
+            print(f"  [OK] Update depth every {depth_freq} frames")
+
+            from src.mode6_ego_speed_v2 import process_video_ego_speed
             success = process_video_ego_speed(
                 input_path=current_video,
                 output_path=output_path,
                 show_video=show_window,
                 fov_degrees=fov_degrees,
-                depth_frequency=10,
-                road_region_ratio=0.4,
+                depth_frequency=depth_freq,
                 model_size='small'
             )
+            # Mode 6 在内部为文件名追加时间戳，返回真实写入路径
+            if success:
+                saved_output_path = success
         else:  # tracking
             # Mode 1: Detection + Tracking
             from src.mode1_detection_tracking import process_video
@@ -546,15 +562,15 @@ def main():
             print("\n" + "=" * 60)
             print("[DONE] Processing Complete!")
             print("=" * 60)
-            print(f"[OK] Output saved: {output_path}")
+            print(f"[OK] Output saved: {saved_output_path}")
             print(f"[OK] Mode: {mode_names.get(model_version, model_version)}")
 
             if enhancement_options:
                 print(f"[OK] Pre-enhancement: {', '.join(enhancement_options)}")
 
             if model_version == 'ego':
-                print("[OK] Ego speed: RAFT + Metric3D v2 road surface sampling")
-                print("[OK] No YOLO detection needed - measures your own vehicle speed!")
+                print("[OK] Ego speed: full-frame RAFT + Metric3D v2 + YOLO dynamic masking")
+                print("[OK] Signed forward/back speed with diagnostic screenshots enabled")
             elif model_version == 'metric3d':
                 print("[OK] RAFT + Metric3D v2 + 3D Speed estimation enabled")
                 print("[OK] Absolute depth (meters) - No calibration needed!")

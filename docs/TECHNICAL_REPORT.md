@@ -2,7 +2,7 @@
 
 > **技术文档** — 服务于 FYP Report 撰写
 > 项目：视频中移动物体速度估算
-> 核心模块：`src/mode1_detection_tracking.py` ~ `src/mode6_ego_speed.py`
+> 核心模块：`src/mode1_detection_tracking.py` ~ `src/mode6_ego_speed_v2.py`
 > 预处理模块：`src/quality_detector.py`、`src/enhance_video.py`
 >
 > 📚 本项目共有三份文档：
@@ -57,7 +57,7 @@
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ Mode 6: 自车速度估算                                              │
-│  路面光流 + 绝对深度 → 中位数速度 → 双阶段 EMA                      │
+│  全图静态背景光流 + 绝对深度 + YOLO 动态掩码 → 中位数速度 → 双阶段 EMA │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,9 +65,9 @@
 
 | 组件 | 技术方案 | 作用 | 使用的模式 |
 |------|---------|------|-----------|
-| **YOLOv8** | 单阶段目标检测（Ultralytics, 2023） | 逐帧检测物体，输出 BBox | Mode 1–5 |
+| **YOLOv8** | 单阶段目标检测（Ultralytics, 2023） | 逐帧检测物体，输出 BBox；Mode 6 中用于动态目标掩码 | Mode 1–6 |
 | **ByteTrack** | 卡尔曼滤波 + 两阶段关联（Zhang et al., ECCV 2022） | 跨帧分配稳定 track_id | Mode 1–5 |
-| **RAFT** | 稠密光流网络（Teed & Deng, ECCV 2020） | 估算摄像头运动或路面位移 | Mode 3–6 |
+| **RAFT** | 稠密光流网络（Teed & Deng, ECCV 2020） | 估算摄像头运动或全图静态背景位移 | Mode 3–6 |
 | **Depth Anything V2** | 单目相对深度（arXiv preprint, TikTok/ByteDance, 2024） | 无量纲相对深度 | Mode 4 |
 | **Metric3D v2** | 单目绝对深度（Yin et al., ICCV 2023） | 真实米数深度 | Mode 5, 6 |
 | **Laplacian 方差** | 无参考图像清晰度（Pech-Pacheco et al., ICIAR 2000） | 模糊检测 | 预处理 |
@@ -442,7 +442,7 @@ $$\hat{c}_x = c_x - \Delta x_{\text{cam}}, \quad \hat{c}_y = c_y - \Delta y_{\te
 
 ### 7.4 滑动窗口速度计算（关键工程贡献）
 
-**为什么逐帧差分不行**：相邻两帧 3D 位置差分，时间基线 $1/\text{FPS} \approx 33\text{ms}$。在此尺度下，深度噪声（典型约 0.1m）被放大为 $0.1 \times 30 = 3\text{ m/s}$ 的速度噪声——相当于 11 km/h，完全不可接受。
+**为什么逐帧差分不行**：相邻两帧 3D 位置差分，时间基线 $1/\text{FPS} \approx 33\text{ms}$。在此尺度下，深度噪声（典型约 0.1m）被放大为 $0.1 \times 30 = 3\text{ m/s}$ 的速度噪声——约 3 m/s，完全不可接受。
 
 **传统 EMA 的问题**（$\alpha = 0.15$）：响应极慢（约 20 帧才反映变化），冷启动从 $v_0 = 0$ 缓慢爬升，前 10+ 帧严重低估。
 
@@ -482,7 +482,30 @@ Mode 5 引入 `last_valid_frame`：只记录每个 `track_id` 最后一次**有�
 
 ### 7.8 数据输出
 
-**视频**：BBox（颜色按深度渐变，近绿远红）+ 追踪ID + 3D速度标签 + 深度小窗
+**视频**：BBox（颜色按深度渐变，近绿远红）+ 追踪 ID + 3D 速度标签 + 深度小窗
+
+**CLI 命名规则**：`main.py` 先生成 `..._result_mode5.mp4` 基础名，`process_video_metric3d()` 再在内部追加时间戳，因此最终视频名为：
+
+```text
+data/cli/output/<输入名>_result_mode5_<timestamp>.mp4
+```
+
+同一 stem 下会继续生成 `*_frames.csv`、`*_objects.csv` 和 `*_crops/`。
+
+**Web 内部命名规则**：Web worker 固定输出为：
+
+```text
+data/web/outputs/{task_id}_output.mp4
+data/web/outputs/{task_id}_output_frames.csv
+data/web/outputs/{task_id}_output_objects.csv
+data/web/outputs/{task_id}_output_crops/
+```
+
+前端实际下载时，视频文件名会被包装成：
+
+```text
+mode5_result_{task_id}.mp4
+```
 
 **`_frames.csv`**（逐帧明细，每帧×每辆车一行）：
 
@@ -504,8 +527,8 @@ Mode 5 引入 `last_valid_frame`：只记录每个 `track_id` 最后一次**有�
 | first_time_s / last_time_s | 首帧/末帧时间（秒） |
 | avg / max / min_speed_ms | 平均/最大/最小速度（m/s） |
 | avg_depth_m | 平均深度（米） |
-| status | 'moving' / 'slow/stationary'（阈速 1 m/s） |
-| first_crop_path | 首帧检测截图路径 |
+| status | `'moving'` / `'unknown'` |
+| first_crop_path | 首帧截图相对路径，格式为 `crops/<文件名>` |
 
 **`_crops/`**（检测截图目录）：每辆车第一帧检测截图保存到子目录，便于人工核查。
 
@@ -515,68 +538,170 @@ Mode 5 引入 `last_valid_frame`：只记录每个 `track_id` 最后一次**有�
 
 ### 8.1 功能概述
 
-Mode 6 **不检测任何外部目标**，专门估算**携带设备（手机/相机/行车记录仪/无人机等）的移动速度**。填补了 Mode 5 无法处理"无其他参照物"场景的空白。
+Mode 6 专门估算**携带设备（手机/相机/行车记录仪/无人机等）的移动速度**，填补了 Mode 5 无法处理“无其他外部参照物”场景的空白。
 
 典型场景：手持行走拍摄、无人机航拍、夜间偏僻道路行车记录仪等。
 
 ### 8.2 核心思路
 
-Mode 5 的局限之一：**摄像头 Z 方向（前进/后退）运动无法被 RAFT 补偿**。RAFT 估计的是摄像头 XY 平移，而前进时产生的 Z 向运动在光流场中与物体运动难以区分。
+Mode 5 的局限之一：**摄像头 Z 方向（前进/后退）运动无法被 RAFT 全局中位数补偿**。Mode 6 的思路不是再去估算“摄像头 XY 平移”，而是直接估算**相机沿光轴方向的有符号速度**。
 
-Mode 6 的思路：**既然无法分别处理，干脆测量整个系统的运动**。通过追踪路面静态纹理特征的速度，得到的就是自车的真实速度。
+当前实现采用：
 
-### 8.3 竖直光流分量的物理含义
+- **全图 RAFT 光流**：Mode 6 默认使用原生分辨率（native）光流，仅做 8 的倍数 padding，不走固定缩放
+- **YOLO 动态目标掩码**：逐帧运行 YOLO，并通过前后两帧重叠框构建时序一致性掩码，去掉 person / car / bus / truck / bicycle / motorcycle / animal 等可独立运动目标
+- **全图静态背景有效像素过滤**：仅在保留下来的静态背景像素上估速
+- **逐像素速度 + 中位数聚合**：得到当前帧的原始自车速度
+- **双阶段 EMA**：输出稳定的实时速度读数
 
-车辆向前行驶，画面中静止路面表现为**向上运动**（$y$ 值减小）。竖直像素速度 $\Delta y$ 与自车速度的关系：
+因此，Mode 6 不再依赖“底部路面 ROI”，而是一个**全图静态背景法**。
 
-$$\Delta Y = \frac{\Delta y}{f_y} \cdot Z$$
+### 8.3 公式与物理意义
 
-其中 $\Delta Y$ 是 3D 前向位移（米），$f_y$ 是竖直焦距，$Z$ 是该点深度（米）。
+对于前后向主导的相机运动，像素相对主点纵坐标记为：
 
-**为什么只用 $\Delta y$ 而不用 $\Delta x$**：转弯时会产生很大的横向光流分量 $\Delta x$，使用 $\Delta x$ 会将匀速转弯误判为加速。只用 $\Delta y$ 可保证：无论直行还是转弯，速度读数均准确。
+$$y' = y - c_y$$
+
+在小位移一阶近似下，沿光轴方向的有符号速度与竖直光流分量满足：
+
+$$v_i = \frac{\Delta y_i \cdot Z_i \cdot \text{FPS}}{y_i - c_y}$$
+
+其中：
+
+- $\Delta y_i$：第 $i$ 个像素的竖直光流分量（向下为正）
+- $Z_i$：该像素对应的 Metric3D 绝对深度（米）
+- $c_y$：相机主点纵坐标
+- FPS：视频帧率
+
+由于最终输出是**有符号速度**，因此：
+
+- 前进与后退都可以估计
+- 符号由 $\Delta y$ 的方向与坐标系定义共同决定
 
 ### 8.4 算法流程
 
-**Step 1 — RAFT 光流**：计算相邻帧间的全图光流场。
+**Step 1 — 原生分辨率 RAFT 光流**
 
-**Step 2 — 路面区域采样**：取图像底部 40% 作为路面区域（高对比度纹理），随机采样 $N = 500$ 个有效点（深度 0.5m–80m）。
+计算相邻帧间的全图光流场。Mode 6 默认使用 RAFT 的 `native` 模式，以避免“先缩小、再放大”对逐像素速度公式造成额外量纲误差。
 
-**Step 3 — 3D 速度计算**：
+**Step 2 — YOLO 动态目标掩码**
 
-$$v_i = \frac{\Delta y_i \cdot Z_i}{f_y} \times \text{FPS}$$
+对每一帧运行 YOLOv8，并结合前后两帧重叠目标框构建时序一致性掩码。YOLO 在 Mode 6 中不用于测速，而是用于**排除独立运动目标**，比“只看当前帧检测框”更稳。
 
-对 500 个采样点分别计算，取**中位数**作为当前帧原始速度。中位数天然抗离群点——即使部分采样来自运动车辆或深度失败区域，中位数仍由正确区域主导。
+**Step 3 — 全图有效像素过滤**
 
-**200 km/h 硬上限**：$|v| > 55.6\text{ m/s}$ 的值直接丢弃，防止极端错误进入平滑器。
+在全图范围内对静态背景像素做四层过滤：
 
-**Step 4 — 双阶段 EMA 平滑**：
+1. **动态掩码过滤**：去掉 YOLO 检出的可运动目标
+2. **低可观测过滤**：去掉 $||\mathbf{F}|| < 0.05$ 的低光流像素
+3. **深度有效过滤**：仅保留 $1 \text{ m} < Z < 100 \text{ m}$ 的像素
+4. **几何退化过滤**：去掉 $|y-c_y| \le 20$ 的主点附近退化区域
+
+这一步得到的是“**全图可观测静态背景像素**”，而不是简单的“底部路面像素”。
+
+**Step 4 — 逐像素速度估计**
+
+对每个有效像素计算：
+
+$$v_i = \frac{\Delta y_i \cdot Z_i \cdot \text{FPS}}{y_i - c_y}$$
+
+然后取**中位数**作为当前帧的原始速度估计：
+
+$$v_{\text{raw}} = \operatorname{median}(v_i)$$
+
+中位数天然抗离群点，因此即使部分像素来自反光、弱纹理或掩码边界，中位数仍由稳定背景区域主导。
+
+**Step 5 — 双阶段 EMA 平滑**
 
 $$\alpha = \begin{cases} 0.5 & (t < 30) \quad \text{Warmup：快速收敛} \\ 0.2 & (t \geq 30) \quad \text{Steady：稳定平滑} \end{cases}$$
 
 - Warmup（前 30 帧，$\alpha = 0.5$）：速度从 0 快速爬升到真实值
 - Steady（30 帧后，$\alpha = 0.2$）：转为稳定平滑，抑制噪声
 
-**3σ 异常抑制**：Steady 阶段启用，若 $|v_{\text{raw}}| > 3 \times |v_{t-1}|$ 则裁剪到 3 倍以内。冷启动期不启用，避免压制从零爬升。
+**转弯检测**：通过有效像素上的 $\Delta x$ 中位数检测明显横向运动，转弯帧会标记为 `TURN`。
+
+**质量分级**：依据有效像素占比输出 `GOOD / FAIR / POOR / TURN`，默认阈值为：
+
+- `GOOD`：有效像素率 $\ge 20\%$
+- `FAIR`：$8\% \le$ 有效像素率 $< 20\%$
+- `POOR`：有效像素率 $< 8\%$
 
 ### 8.5 数据输出
 
-**视频**：实时速度面板（km/h，正负符号）+ 速度曲线图（最近 120 帧）
+**视频**：实时速度面板（m/s，正负符号）+ 质量标记 + 有效像素占比 + 速度历史曲线
 
-**`_frames.csv`**：每帧数据（帧号、速度 m/s、速度 km/h、路面平均深度、有效像素数）
+**CLI 命名规则**：`main.py` 先生成 `..._result_mode6.mp4` 基础名，`process_video_ego_speed()` 再在内部追加时间戳，因此最终视频名为：
 
-**`_stats.csv`**：按秒汇总（平均/最大/最小速度、秒级位移、累计位移）+ 汇总行（全程统计）
+```text
+data/cli/output/<输入名>_result_mode6_<timestamp>.mp4
+```
+
+同一 stem 下会继续生成 `*_frames.csv`、`*_stats.csv` 和 `*_diagnostics/`。
+
+**Web 内部命名规则**：Web worker 固定输出为：
+
+```text
+data/web/outputs/{task_id}_output.mp4
+data/web/outputs/{task_id}_output_frames.csv
+data/web/outputs/{task_id}_output_stats.csv
+data/web/outputs/{task_id}_output_diagnostics/
+```
+
+前端实际下载时，视频文件名会被包装成：
+
+```text
+mode6_result_{task_id}.mp4
+```
+
+ZIP 文件名为：
+
+```text
+mode6_data_{task_id}.zip
+```
+
+**`_frames.csv`**：逐帧明细，包含：
+
+- `frame_idx`
+- `timestamp_s`
+- `ego_speed_ms`
+- `quality_flag`
+- `flow_valid_rate`
+- `valid_pixel_percent`
+- `valid_pixels`
+- `total_pixels`
+- `dx_median`
+- `raw_speed_ms`
+
+**`_stats.csv`**：按秒汇总，包含：
+
+- `avg_speed_ms`
+- `max_speed_ms`
+- `min_speed_ms`
+- `displacement_m`
+- `cumulative_displacement_m`
+- `dominant_quality`
+- `avg_valid_pixel_percent`
+
+**`_diagnostics/` 诊断目录**：每 20 帧导出一组诊断图，每组 3 张，文件名前缀为对应帧号（例如 `frame_000020_*`）：
+
+- `valid_mask_overlay.png`
+- `valid_mask_binary.png`
+- `flow_visualization.png`
+
+目录名与用途保持一致：Mode 6 直接输出到 `_diagnostics/`。
 
 ### 8.6 Mode 5 与 Mode 6 对比
 
 | 维度 | Mode 5 | Mode 6 |
 |------|--------|--------|
 | **目标** | 测外部物体相对于地面的速度（已排除摄像头干扰） | 估算携带设备的移动速度 |
-| **YOLO** | 需要 | 不需要 |
-| **光流用途** | 估算摄像头运动（背景） | 追踪路面特征（前景） |
-| **深度用途** | 物体 BBox 区域采样 | 路面区域采样 |
+| **YOLO** | 需要（目标检测） | 需要（动态目标掩码） |
+| **光流用途** | 估算摄像头运动（背景） | 估算全图静态背景的前后向速度 |
+| **深度用途** | 物体 BBox 区域采样 | 全图有效像素采样 |
 | **去噪手段** | 滑动窗口 + 轻 EMA | 中位数 + 3σ + 双阶段 EMA |
 | **速度维度** | XYZ 三轴 | Z 轴（纵向） |
 | **速度符号** | 正（绝对值） | 正负（前进/倒车） |
+| **光流分辨率** | 固定分辨率 | 原生分辨率（native） |
 | **适用场景** | 外部目标测速 | 手持/行走/无参照场景 |
 
 ### 8.7 两模式协同
@@ -593,7 +718,7 @@ Mode 6 的自车速度可反向改进 Mode 5：从 Mode 5 的外部物体 Z 轴�
 |------|--------|--------|--------|--------|--------|
 | 速度单位 | m/s | m/s | m/s | m/s | m/s |
 | 标定方式 | 物体标准尺寸 | 物体标准尺寸 | 相对深度修正 | 绝对深度反投影 | 绝对深度反投影 |
-| 摄像头补偿 | 无 | RAFT 全局中位数 | RAFT 全局中位数 | RAFT 全局中位数 | — |
+| 摄像头补偿 | 无 | RAFT 全局中位数 | RAFT 全局中位数 | RAFT 全局中位数 | 全图静态背景过滤 + YOLO 动态掩码 |
 | 时间基线 | 逐帧差分（~33ms） | 逐帧差分（~33ms） | 逐帧差分（~33ms） | 滑动窗口（~200ms） | 单帧中位数 |
 | 平滑手段 | EMA(α=0.3) | EMA(α=0.3) | EMA(α=0.3) | 轻EMA(α=0.4) + 窗口 | 双阶段EMA + 3σ |
 | 理论精度 | — | — | ±10–15% | ±2–5% | 参考级 |
@@ -626,7 +751,7 @@ Mode 6 的自车速度可反向改进 Mode 5：从 Mode 5 的外部物体 Z 轴�
 | Mode 3 | Z 方向运动未处理 | 结合 IMU 或 Mode 6 |
 | Mode 4 | 相对深度依赖经验假设 | 使用 Mode 5 |
 | Mode 5 | 摄像头前进/后退未补偿；深度频率有限 | 融合 Mode 6 读数；提高深度频率 |
-| Mode 6 | 依赖路面纹理；不如 GPS 精确 | 融合 IMU/GPS；增加纹理质量检测 |
+| Mode 6 | 依赖静态背景纹理与有效深度；剧烈转弯/俯仰变化仍有挑战 | 融合 IMU/GPS；增加残差过滤与姿态补偿 |
 
 ---
 
@@ -638,7 +763,7 @@ Mode 6 的自车速度可反向改进 Mode 5：从 Mode 5 的外部物体 Z 轴�
 
 3. **真实世界速度输出**：Mode 5 利用 Metric3D v2 的绝对度量深度，结合 Pinhole 反投影和滑动窗口算法，直接输出 m/s 真实物理单位，精度 ±2–5%，无需参照物。
 
-4. **自车速度独立估算**：Mode 6 利用路面静态纹理光流和绝对深度，实现无需外部参照物的自车速度实时估计，填补了无参照场景下的速度测量空白。
+4. **自车速度独立估算**：Mode 6 利用全图静态背景光流、YOLO 动态掩码与绝对深度，实现无需外部参照物的自车速度实时估计，填补了无参照场景下的速度测量空白。
 
 5. **多层级鲁棒估计体系**：Mode 5/6 均采用了滑动窗口/中位数 + 异常裁剪 + EMA 的多层级去噪设计，在噪声极高的单目估计场景中保证了输出稳定性。
 

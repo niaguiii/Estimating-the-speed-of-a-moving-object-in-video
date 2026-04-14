@@ -28,7 +28,14 @@ warnings.filterwarnings('ignore')
 class RAFTOpticalFlow:
     """RAFT光流估计器 - 摄像头运动分离"""
     
-    def __init__(self, model_type: str = 'small', device: str = 'auto'):
+    def __init__(
+        self,
+        model_type: str = 'small',
+        device: str = 'auto',
+        resolution_mode: str = 'fixed',
+        fixed_size: Tuple[int, int] = (960, 520),
+        pad_multiple: int = 8,
+    ):
         """
         初始化RAFT模型
         
@@ -42,7 +49,17 @@ class RAFTOpticalFlow:
         else:
             self.device = torch.device(device)
         
-        print(f"[RAFT] Initializing RAFT_{model_type.upper()} on {self.device}")
+        if resolution_mode not in {'fixed', 'native'}:
+            raise ValueError("resolution_mode must be 'fixed' or 'native'")
+
+        self.resolution_mode = resolution_mode
+        self.fixed_size = fixed_size
+        self.pad_multiple = max(int(pad_multiple), 1)
+
+        print(
+            f"[RAFT] Initializing RAFT_{model_type.upper()} on {self.device} "
+            f"(mode={self.resolution_mode})"
+        )
 
         try:
             if model_type == 'small':
@@ -67,6 +84,24 @@ class RAFTOpticalFlow:
         """检查 RAFT 模型是否已成功加载"""
         return getattr(self, '_available', False)
     
+    def _pad_frame_to_multiple(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
+        """Pad a frame so RAFT can run at native resolution."""
+        h, w = frame.shape[:2]
+        pad_h = (self.pad_multiple - (h % self.pad_multiple)) % self.pad_multiple
+        pad_w = (self.pad_multiple - (w % self.pad_multiple)) % self.pad_multiple
+        if pad_h == 0 and pad_w == 0:
+            return frame, (0, 0)
+
+        padded = cv2.copyMakeBorder(
+            frame,
+            0,
+            pad_h,
+            0,
+            pad_w,
+            borderType=cv2.BORDER_REPLICATE,
+        )
+        return padded, (pad_h, pad_w)
+
     def preprocess_frame(self, frame: np.ndarray) -> torch.Tensor:
         """
         预处理帧：BGR -> RGB -> Tensor
@@ -88,47 +123,58 @@ class RAFTOpticalFlow:
         
         return frame_tensor.to(self.device)
     
-    def compute_flow(self, frame1: np.ndarray, frame2: np.ndarray) -> np.ndarray:
+    def compute_flow(self, frame1: np.ndarray, frame2: np.ndarray,
+                     output_height: Optional[int] = None,
+                     output_width: Optional[int] = None) -> np.ndarray:
         """
         计算两帧之间的光流
 
         Args:
             frame1: 前一帧 (H, W, 3) BGR
             frame2: 当前帧 (H, W, 3) BGR
+            output_height: 可选，指定输出光流的高度（像素）
+            output_width:  可选，指定输出光流的宽度（像素）
+                           若未指定，光流输出尺寸与输入帧相同。
 
         Returns:
-            flow: 光流场 (H, W, 2) 其中flow[:,:,0]是x方向，flow[:,:,1]是y方向
+            flow: 光流场 (output_height, output_width, 2)
+                 其中 flow[:,:,0] 是 x 方向（向右正），flow[:,:,1] 是 y 方向（向下正）
         """
         if not self.is_available():
             raise RuntimeError("RAFT model not available")
+
         orig_h, orig_w = frame1.shape[:2]
-        
-        # RAFT要求宽高都能被8整除，不足则pad
-        pad_h = (8 - orig_h % 8) % 8
-        pad_w = (8 - orig_w % 8) % 8
-        
-        if pad_h > 0 or pad_w > 0:
-            frame1 = cv2.copyMakeBorder(frame1, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
-            frame2 = cv2.copyMakeBorder(frame2, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
-        
+        if self.resolution_mode == 'native':
+            frame1_raft, _ = self._pad_frame_to_multiple(frame1)
+            frame2_raft, _ = self._pad_frame_to_multiple(frame2)
+        else:
+            raft_w, raft_h = self.fixed_size
+            frame1_raft = cv2.resize(frame1, (raft_w, raft_h), interpolation=cv2.INTER_LINEAR)
+            frame2_raft = cv2.resize(frame2, (raft_w, raft_h), interpolation=cv2.INTER_LINEAR)
+
         with torch.no_grad():
-            # 预处理
-            img1 = self.preprocess_frame(frame1)
-            img2 = self.preprocess_frame(frame2)
-            
-            # RAFT推理
+            img1 = self.preprocess_frame(frame1_raft)
+            img2 = self.preprocess_frame(frame2_raft)
             flow_predictions = self.model(img1, img2)
-            
-            # 获取最终预测 (取最后一个迭代结果)
             flow = flow_predictions[-1][0].cpu().numpy()
-            
-            # (2, H, W) -> (H, W, 2)
             flow = np.transpose(flow, (1, 2, 0))
-        
-        # 裁剪回原始尺寸
-        if pad_h > 0 or pad_w > 0:
+
+        if self.resolution_mode == 'native':
             flow = flow[:orig_h, :orig_w]
-            
+
+        target_h = output_height if output_height is not None else orig_h
+        target_w = output_width if output_width is not None else orig_w
+        if flow.shape[0] != target_h or flow.shape[1] != target_w:
+            scale_x = target_w / float(flow.shape[1])
+            scale_y = target_h / float(flow.shape[0])
+            flow = cv2.resize(flow, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            flow[:, :, 0] *= scale_x
+            flow[:, :, 1] *= scale_y
+        elif self.resolution_mode == 'fixed':
+            raft_w, raft_h = self.fixed_size
+            flow[:, :, 0] *= target_w / float(raft_w)
+            flow[:, :, 1] *= target_h / float(raft_h)
+
         return flow
     
     def estimate_camera_motion(self, flow: np.ndarray, 

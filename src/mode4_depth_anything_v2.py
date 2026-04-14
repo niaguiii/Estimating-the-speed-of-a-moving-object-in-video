@@ -26,7 +26,7 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
-from enhance_video import get_video_writer
+from src.enhance_video import get_video_writer
 
 # 兼容相对导入和绝对导入
 try:
@@ -305,7 +305,7 @@ def process_video_phase3(input_path: str, output_path: str,
         # 计算光流和摄像头运动
         camera_motion = (0.0, 0.0)
         if prev_frame is not None:
-            flow = raft.compute_flow(prev_frame, frame)
+            flow = raft.compute_flow(prev_frame, frame, output_height=height, output_width=width)
             camera_motion = raft.estimate_camera_motion(flow, method='median')
         
         # 深度估计（每N帧）
@@ -375,7 +375,6 @@ def process_video_phase3(input_path: str, output_path: str,
                     'camera_dy': round(float(camera_motion[1]), 3),
                     'depth_normalized': round(float(depth_normalized), 4),
                     'speed_ms': round(float(speed), 3),
-                    'speed_kmh': round(float(speed * 3.6), 3),
                 })
                 
                 # 绘制边界框（颜色根据深度）
@@ -443,7 +442,7 @@ def process_video_phase3(input_path: str, output_path: str,
             rows=csv_rows,
             header_lines=[
                 "mode: 4 | algorithm: YOLOv8 + ByteTrack + RAFT + Depth Anything V2",
-                "unit: speed_ms = m/s, speed_kmh = km/h; depth_normalized = relative depth [0=far, 1=near]",
+                "unit: speed_ms = m/s; depth_normalized = relative depth [0=far, 1=near]",
                 "camera_dx/dy: camera motion (pixels/frame); speed: object speed after motion compensation",
             ]
         )

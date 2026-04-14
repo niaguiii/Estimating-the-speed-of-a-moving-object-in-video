@@ -24,7 +24,7 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
-from enhance_video import get_video_writer
+from src.enhance_video import get_video_writer
 
 
 # =============================================================================
@@ -60,7 +60,6 @@ def write_csv_with_header(csv_path: str, fieldnames: list, rows: list,
                 'y2': 'Bounding box right-bottom Y (pixels)',
                 'pixel_speed_px_per_frame': 'Object displacement per frame (pixels/frame)',
                 'speed_ms': 'Estimated speed (meters/second), based on object real-size calibration',
-                'speed_kmh': 'Estimated speed (kilometers/hour)',
                 'depth_normalized': 'Relative depth from Depth Anything V2 [0=far, 1=near]',
                 'depth_meters': 'Absolute depth from Metric3D v2 (meters)',
                 'cx': 'Object bounding box center X (pixels)',
@@ -380,7 +379,6 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                 # 真实世界速度估算（m/s）
                 px_per_m = speed_est.estimate_pixels_per_meter(class_name, w, h)
                 speed_ms = speed_est.calculate_speed_ms(speed_px, px_per_m)
-                speed_kmh = round(speed_ms * 3.6, 3) if speed_ms is not None else None
 
                 if output_path:
                     csv_rows.append({
@@ -391,7 +389,6 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                         'x1': x, 'y1': y, 'x2': x + w, 'y2': y + h,
                         'pixel_speed_px_per_frame': round(float(speed_px), 3),
                         'speed_ms': round(speed_ms, 3) if speed_ms is not None else None,
-                        'speed_kmh': speed_kmh,
                     })
                 
                 # ✅ 优化标签格式：更清晰易读
@@ -456,7 +453,7 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
         static_fields = [
             'frame', 'track_id', 'class_name', 'confidence',
             'x1', 'y1', 'x2', 'y2',
-            'pixel_speed_px_per_frame', 'speed_ms', 'speed_kmh',
+            'pixel_speed_px_per_frame', 'speed_ms',
         ]
         write_csv_with_header(
             csv_path,
@@ -464,7 +461,7 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
             rows=csv_rows,
             header_lines=[
                 "mode: 1 | algorithm: YOLOv8 + ByteTrack",
-                "unit: speed_ms = m/s (based on real object sizes, see OBJECT_REAL_SIZES); speed_kmh = km/h; pixel_speed_px_per_frame = pixels/frame",
+                "unit: speed_ms = m/s (based on real object sizes, see OBJECT_REAL_SIZES); pixel_speed_px_per_frame = pixels/frame",
             ]
         )
         print(f"[CSV] Exported: {csv_path} ({len(csv_rows)} records)")

@@ -23,7 +23,7 @@ Estimating-the-speed-of-a-moving-object-in-video/
 │
 ├── .gitignore                 # Git 忽略规则（模型、日志、缓存等）
 │
-├── src/                       # 核心源代码模块（15 个 .py 文件，扁平结构）
+├── src/                       # 核心源代码模块（16 个 .py 文件，扁平结构）
 │   ├── __init__.py
 │   ├── model_config.py        # 模型下载路径管理（必须在 DL 库之前 import）
 │   │
@@ -32,9 +32,10 @@ Estimating-the-speed-of-a-moving-object-in-video/
 │   ├── mode3_raft_optical_flow.py     # Mode 3: RAFT 光流 + 摄像头运动补偿
 │   ├── mode4_depth_anything_v2.py     # Mode 4: Depth Anything V2 相对深度感知
 │   ├── mode5_metric3d_v2.py           # Mode 5: Metric3D v2 绝对度量深度（推荐）
-│   ├── mode6_ego_speed.py             # Mode 6: 路面光流自车速度估算（无需 YOLO）
+│   ├── mode6_ego_speed_v2.py          # Mode 6: 全图静态背景自车速度估算（当前主实现）
+│   ├── mode6_ego_speed.py             # Mode 6: 旧版路面 ROI 实现（legacy）
 │   │
-│   ├── optical_flow_raft.py            # RAFT 稠密光流算法封装
+│   ├── optical_flow_raft.py            # RAFT 稠密光流算法封装（Mode 6 默认 native）
 │   ├── depth_estimation.py             # Depth Anything V2 深度估计封装
 │   ├── depth_estimation_metric3d.py     # Metric3D v2 深度估计封装
 │   │
@@ -88,14 +89,15 @@ Estimating-the-speed-of-a-moving-object-in-video/
 │   │   └── src/
 │   │       ├── api/index.js    # Axios API 封装（与后端通信）
 │   │       └── components/
-│   │           ├── VideoUpload.vue    # 拖拽上传视频
-│   │           ├── ModeSelector.vue   # 模式选择（1-6）
-│   │           ├── ProgressBar.vue    # 实时进度条
-│   │           └── ResultDisplay.vue  # 结果展示与下载
+│   │           ├── VideoUpload.vue     # 拖拽上传视频
+│   │           ├── ModeSelector.vue    # 模式选择（1-6）
+│   │           ├── ProgressBar.vue     # 实时进度条
+│   │           ├── ResultDisplay.vue   # 通用结果展示（legacy）
+│   │           └── ResultDisplayV2.vue # 当前结果展示（支持 Mode 6 双CSV与诊断图）
 │   │
 │   └── backend/                 # FastAPI 后端
 │       ├── app.py              # FastAPI 主程序（上传、处理、轮询、下载）
-│       ├── process_worker.py    # 独立子进程处理 worker（可 kill）
+│       ├── process_worker.py    # 独立子进程处理 worker（异步启动，可 kill）
 │       └── requirements.txt
 │
 ├── models/                     # 模型文件与配置
@@ -130,7 +132,7 @@ Estimating-the-speed-of-a-moving-object-in-video/
 | **Mode 3** | `src/mode3_raft_optical_flow.py` | RAFT 光流提取摄像头运动，已补偿速度 |
 | **Mode 4** | `src/mode4_depth_anything_v2.py` | Depth Anything V2 相对深度 + 透视修正 |
 | **Mode 5** | `src/mode5_metric3d_v2.py` | Metric3D v2 绝对度量深度 + 滑动窗口 3D 速度（**推荐**） |
-| **Mode 6** | `src/mode6_ego_speed.py` | 路面光流 + Metric3D v2，自车速度，无需 YOLO |
+| **Mode 6** | `src/mode6_ego_speed_v2.py` | 全图静态背景光流 + Metric3D v2 + YOLO 动态掩码，自车速度（当前主实现） |
 
 ### 2.2 底层算法模块
 
@@ -161,14 +163,14 @@ Estimating-the-speed-of-a-moving-object-in-video/
 | **VideoUpload** | `src/components/VideoUpload.vue` | 拖拽上传视频，支持 FOV 参数输入 |
 | **ModeSelector** | `src/components/ModeSelector.vue` | 模式选择（Mode 1-6），不同模式展示不同参数选项 |
 | **ProgressBar** | `src/components/ProgressBar.vue` | 实时进度条，显示当前处理阶段 |
-| **ResultDisplay** | `src/components/ResultDisplay.vue` | 结果展示与下载，包含视频预览和 CSV 数据展示 |
+| **ResultDisplayV2** | `src/components/ResultDisplayV2.vue` | 当前结果展示与下载，支持 Mode 6 双CSV与诊断图 |
 
 ### 3.2 后端（FastAPI）
 
 | 端点 | 说明 |
 |------|------|
 | `POST /api/upload` | 上传视频文件 |
-| `POST /api/process` | 启动视频处理（异步，后端启动线程） |
+| `POST /api/process` | 启动视频处理并立即返回 `task_id`（异步） |
 | `GET /api/task/{task_id}` | 轮询处理进度 |
 | `GET /api/files/{task_id}/{filepath}` | 下载指定中间文件（标注视频、CSV等） |
 | `GET /api/download-enhanced/{video_id}` | 下载增强后视频 |
@@ -224,34 +226,140 @@ Estimating-the-speed-of-a-moving-object-in-video/
 
 ## 6. 主要配置参数
 
-### 6.1 Mode 5/6 专用参数（`src/mode5_metric3d_v2.py` / `src/mode6_ego_speed.py`）
+### 6.1 Mode 5/6 专用参数（`src/mode5_metric3d_v2.py` / `src/mode6_ego_speed_v2.py`）
 
 | 参数 | Mode 5 | Mode 6 | 说明 |
 |------|--------|--------|------|
 | 滑动窗口大小 | 7 帧 | N/A | Mode 5 速度计算基线 |
-| 深度采样 | BBox 中值 | 路面区域随机 500 点 | 物体 vs 路面 |
-| 深度频率 | 每 5 帧 | 每 5 帧 | 深度估计频率 |
+| 深度采样 | BBox 中值 | 全图有效像素 | 物体 vs 静态背景 |
+| 深度频率 | 每 5 帧 | 默认每 5 帧，可调 | 深度估计频率 |
 | 平滑系数 | EMA α=0.4 | Warmup α=0.5 / Steady α=0.2 | 速度 EMA |
-| 路面区域比例 | N/A | 底部 40% | Mode 6 采样区域 |
-| 速度上限 | 无 | 200 km/h | Mode 6 硬上限 |
+| 光流分辨率 | fixed | native | Mode 6 默认原生分辨率光流 |
+| 低光流阈值 | N/A | 0.05 px/frame | Mode 6 低可观测过滤 |
+| 几何退化阈值 | N/A | \|y-cy\| > 20 px | Mode 6 主点附近退化过滤 |
 
 ---
 
 ## 7. 输出文件说明
 
-### 7.1 CLI 输出（Mode 1-6）
+### 7.1 CLI 输出
 
-| 文件类型 | 说明 |
-|---------|------|
-| `*_annotated.mp4` | 带检测框、速度标签的标注视频 |
-| `*_frames.csv` | 逐帧明细数据（Mode 5） |
-| `*_objects.csv` | 按车辆汇总数据（Mode 5） |
-| `*_stats.csv` | 按秒汇总统计（Mode 6） |
-| `*_crops/` | 每辆车首帧检测截图（Mode 5） |
+CLI 会先生成 `..._result_mode5.mp4` / `..._result_mode6.mp4` 基础名，再由 Mode 5 / Mode 6 在内部追加时间戳，避免重复运行覆盖旧结果。
 
-### 7.2 Web 输出
+**Mode 5**
 
-通过 `ResultDisplay.vue` 组件在线预览和下载，结果与 CLI 输出格式相同。
+- 视频：`data/cli/output/<输入名>_result_mode5_<timestamp>.mp4`
+- 逐帧 CSV：`<同 stem>_frames.csv`
+- 目标汇总 CSV：`<同 stem>_objects.csv`
+- 截图目录：`<同 stem>_crops/`
+
+`_objects.csv` 中的 `first_crop_path` 保存为相对路径：
+
+- `crops/<文件名>`
+
+**Mode 6**
+
+- 视频：`data/cli/output/<输入名>_result_mode6_<timestamp>.mp4`
+- 逐帧 CSV：`<同 stem>_frames.csv`
+- 秒级汇总 CSV：`<同 stem>_stats.csv`
+- 诊断图目录：`<同 stem>_diagnostics/`
+
+### 7.2 Web 内部输出
+
+Web worker 为了配合轮询、下载和历史记录，固定使用任务 ID 命名：
+
+- 视频：`data/web/outputs/{task_id}_output.mp4`
+- Mode 5 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_objects.csv`
+- Mode 6 CSV：
+  - `{task_id}_output_frames.csv`
+  - `{task_id}_output_stats.csv`
+- 图片目录：
+  - Mode 5：`{task_id}_output_crops/`
+  - Mode 6：`{task_id}_output_diagnostics/`
+
+### 7.3 Web 下载文件名
+
+- 视频下载：
+  - `mode5_result_{task_id}.mp4`
+  - `mode6_result_{task_id}.mp4`
+- ZIP 下载：
+  - `mode5_data_{task_id}.zip`
+  - `mode6_data_{task_id}.zip`
+
+ZIP 内部统一打包为：
+
+- `processed_video.mp4`
+- 原始 CSV 文件名
+- `crops/` 或 `diagnostics/` 目录
+
+### 7.4 CSV 与诊断图
+
+**Mode 5 `_frames.csv`**
+
+- `frame`
+- `track_id`
+- `class_name`
+- `confidence`
+- `cx`
+- `cy`
+- `x1`
+- `y1`
+- `x2`
+- `y2`
+- `camera_dx`
+- `camera_dy`
+- `depth_meters`
+- `speed_ms`
+
+**Mode 5 `_objects.csv`**
+
+- `track_id`
+- `class_name`
+- `first_time_s`
+- `last_time_s`
+- `duration_s`
+- `avg_speed_ms`
+- `max_speed_ms`
+- `min_speed_ms`
+- `avg_depth_m`
+- `status`
+- `first_crop_path`
+
+**Mode 6 `_frames.csv`**
+
+- `frame_idx`
+- `timestamp_s`
+- `ego_speed_ms`
+- `quality_flag`
+- `flow_valid_rate`
+- `valid_pixel_percent`
+- `valid_pixels`
+- `total_pixels`
+- `dx_median`
+- `raw_speed_ms`
+
+**Mode 6 `_stats.csv`**
+
+- `second`
+- `start_frame`
+- `end_frame`
+- `avg_speed_ms`
+- `max_speed_ms`
+- `min_speed_ms`
+- `displacement_m`
+- `cumulative_displacement_m`
+- `dominant_quality`
+- `avg_valid_pixel_percent`
+
+**Mode 6 `_diagnostics/`**
+
+Mode 6 默认每 `20` 帧导出一组诊断图，每组 `3` 张：
+
+- `frame_000020_valid_mask_overlay.png`
+- `frame_000020_valid_mask_binary.png`
+- `frame_000020_flow_visualization.png`
 
 ---
 
@@ -269,11 +377,11 @@ main.py
   ├── src/mode3_raft_optical_flow.py
   ├── src/mode4_depth_anything_v2.py
   ├── src/mode5_metric3d_v2.py
-  └── src/mode6_ego_speed.py
+  └── src/mode6_ego_speed_v2.py
 
 web/backend/app.py
   ├── src/mode5_metric3d_v2.py    (或任意其他 mode)
-  └── src/process_worker.py
+  └── web/backend/process_worker.py
 
 web/frontend/ (Vite dev server)
   └── src/api/index.js            → FastAPI backend

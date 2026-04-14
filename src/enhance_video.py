@@ -59,6 +59,11 @@ def get_video_writer(output_path: str, fps: float, width: int, height: int) -> c
     Windows 上 OpenCV 对 H.264 的支持取决于编译时是否绑定了 ffmpeg，
     如果 'avc1' 失败会自动降级。
     """
+    output_path = os.path.abspath(os.path.normpath(output_path))
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
     # 优先 H.264（浏览器最兼容）
     preferred = [('avc1', 'H.264/avc1'), ('H264', 'H.264/H264')]
     fallback = [('mp4v', 'MP4V（兼容性差）')]

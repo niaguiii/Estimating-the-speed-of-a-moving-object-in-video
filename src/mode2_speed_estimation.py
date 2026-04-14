@@ -29,7 +29,7 @@ except ImportError:
     import model_config
 
 from ultralytics import YOLO
-from enhance_video import get_video_writer
+from src.enhance_video import get_video_writer
 
 
 # =============================================================================
@@ -274,7 +274,7 @@ class YOLOv8SpeedDetector:
                     track['speed_ms'] = smoothed_speed
                     
                     # Record speed for statistics
-                    if smoothed_speed is not None and smoothed_speed < 60:  # 60 m/s = 216 km/h
+                    if smoothed_speed is not None and smoothed_speed < 60:  # 60 m/s（日常场景上限）
                         if track_id not in self.speed_records:
                             self.speed_records[track_id] = []
                         self.speed_records[track_id].append(smoothed_speed)
@@ -483,7 +483,6 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
                         'x1': x, 'y1': y, 'x2': x + w, 'y2': y + h,
                         'pixel_speed_px_per_frame': round(float(pixel_speed), 3),
                         'speed_ms': round(float(speed_ms), 3) if speed_ms is not None else None,
-                        'speed_kmh': round(float(speed_ms * 3.6), 3) if speed_ms is not None else None,
                     })
                 
                 if speed_ms is not None:
@@ -567,7 +566,7 @@ def process_video(input_path, output_path=None, show_video=True, conf_threshold=
             rows=csv_rows,
             header_lines=[
                 "mode: 2 | algorithm: YOLOv8 + ByteTrack + Object-Size Speed Calibration",
-                "unit: speed_ms = m/s (meters/second), speed_kmh = km/h",
+                "unit: speed_ms = m/s (meters/second)",
                 "⚠️  speed is estimated by calibrating pixel-size of each object class against real-world average sizes",
             ]
         )

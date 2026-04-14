@@ -17,7 +17,7 @@ except ImportError:
 
 from ultralytics import YOLO
 
-from enhance_video import get_video_writer
+from src.enhance_video import get_video_writer
 
 class YOLOv8Detector:
     def __init__(self, model_name='yolov8n.pt'):
